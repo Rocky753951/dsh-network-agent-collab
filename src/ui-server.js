@@ -34,13 +34,21 @@ export function createUiHandler(api, prefix = '') {
       const path = new URL(req.url, 'http://127.0.0.1').pathname.slice(prefix.length) || '/';
       if (req.method === 'GET' && path === '/health') return json(res, 200, { ok: true });
       if (req.method === 'GET' && path === '/snapshot') return json(res, 200, await api.snapshot());
+      if (req.method === 'GET' && path === '/setup/status') {
+        if (typeof api.setupStatus !== 'function') return json(res, 404, { error: 'NOT_FOUND' });
+        return json(res, 200, await api.setupStatus());
+      }
       if (req.method !== 'POST') return json(res, 404, { error: 'NOT_FOUND' });
       const args = await bodyOf(req);
-      if (path === '/approve') return json(res, 200, await api.approve(args));
-      if (path === '/message') return json(res, 200, await api.message(args));
-      if (path === '/activate') return json(res, 200, await api.activate(args));
-      if (path === '/task') return json(res, 200, await api.task(args));
-      return json(res, 404, { error: 'NOT_FOUND' });
+      const routes = {
+        '/approve': 'approve', '/message': 'message', '/activate': 'activate', '/task': 'task',
+        '/setup': 'setup', '/host/create': 'hostCreate', '/join/request': 'joinRequest',
+        '/join/decide': 'joinDecide', '/members/remove': 'membersRemove', '/pair/leave': 'pairLeave',
+        '/relay/retry': 'relayRetry',
+      };
+      const method = routes[path];
+      if (!method || typeof api[method] !== 'function') return json(res, 404, { error: 'NOT_FOUND' });
+      return json(res, 200, await api[method](args));
     } catch (error) {
       json(res, 400, { error: error?.message || 'BAD_REQUEST' });
     }
