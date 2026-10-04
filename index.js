@@ -1,4 +1,4 @@
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { FederationClient, JsonStore, dataPath } from './src/core.js';
@@ -33,8 +33,11 @@ export function apply(ctx, config = {}) {
   const mode = config.mode || 'lan';
   if (!['lan', 'internet'].includes(mode)) throw new Error('network-agent-collab mode must be lan or internet');
   const roomId = config.roomId || 'default';
-  const agentId = config.agentId;
-  if (!agentId || agentId.startsWith('CHANGE_ME')) throw new Error('network-agent-collab requires a stable, unique config.agentId');
+  // Stable by default on one machine; users may override when several DSH instances share a hostname.
+  const configuredAgentId = config.agentId;
+  const agentId = configuredAgentId && !configuredAgentId.startsWith('CHANGE_ME')
+    ? configuredAgentId
+    : `dsh-${hostname().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || 'node'}`;
   if (mode === 'lan' && (!config.sharedSecret || config.sharedSecret === 'CHANGE_ME' || Buffer.byteLength(config.sharedSecret) < 32)) {
     throw new Error('network-agent-collab LAN mode requires config.sharedSecret of at least 32 bytes (not CHANGE_ME)');
   }

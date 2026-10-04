@@ -41,7 +41,7 @@
 dsh plugin --profile web add ./
 ```
 
-配置每台 DSH 的 bundle。LAN 模式必须使用相同的 `roomId` 与 `sharedSecret`，并为每台主机设置唯一、稳定的 `agentId`：
+配置每台 DSH 的 bundle。LAN/Tailscale Relay 模式必须使用相同的 `roomId` 与 `sharedSecret`。`agentId` 可省略，插件会按本机主机名自动生成稳定 ID；如果同一主机运行多个 DSH 实例，请手动指定唯一 ID：
 
 ```yaml
 - name: dsh-network-agent-collab
