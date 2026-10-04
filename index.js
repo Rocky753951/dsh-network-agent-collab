@@ -124,7 +124,14 @@ export function apply(ctx, config = {}) {
         if (!status.setup || status.setup.role !== 'host') throw new Error('SETUP_HOST_ROLE_REQUIRED');
         if (!embeddedRelay) embeddedRelay = await createRelay({ port: Number.isSafeInteger(args.port) ? args.port : 0 });
         const transport = status.setup.network === 'lan' ? status.setup.lanTransport : 'public';
-        const endpoint = typeof args.endpoint === 'string' && args.endpoint ? args.endpoint : `ws://${localAddress()}:${embeddedRelay.port}`;
+        const tailscale = transport === 'tailscale' ? await tailscaleStatus() : null;
+        const advertisedHost = transport === 'tailscale'
+          ? (tailscale?.self?.dnsName || tailscale?.self?.addresses?.[0])
+          : localAddress();
+        if (transport === 'tailscale' && !advertisedHost) throw new Error('TAILSCALE_NOT_READY');
+        // No service is used for public NAT traversal: a reachable WSS endpoint is required.
+        if (transport === 'public' && !(typeof args.endpoint === 'string' && args.endpoint.startsWith('wss://'))) throw new Error('PUBLIC_WSS_ENDPOINT_REQUIRED');
+        const endpoint = typeof args.endpoint === 'string' && args.endpoint ? args.endpoint : `ws://${advertisedHost}:${embeddedRelay.port}`;
         const created = await setupState.createHost({ transport, endpoint });
         await startPairedClient();
         return { ...created.status, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, endpoint, relay: { running: true, port: embeddedRelay.port } };

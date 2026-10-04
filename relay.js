@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 
 export async function createRelay({ host = '0.0.0.0', port = 0, maxBytes = 70 * 1024 } = {}) {
-  const wss = new WebSocketServer({ host, port, maxPayload: maxBytes });
+  const wss = await new Promise((resolve, reject) => {
+    const server = new WebSocketServer({ host, port, maxPayload: maxBytes }, () => resolve(server));
+    server.once('error', reject);
+  });
   wss.on('connection', (socket) => {
     socket.on('message', (data, isBinary) => {
       if (isBinary || data.length > maxBytes) return socket.close(1009, 'message too large');
@@ -17,10 +20,6 @@ export async function createRelay({ host = '0.0.0.0', port = 0, maxBytes = 70 * 
         if (peer !== socket && peer.roomId === socket.roomId && peer.readyState === peer.OPEN) peer.send(data, { binary: false });
       }
     });
-  });
-  await new Promise((resolve, reject) => {
-    wss.once('listening', resolve);
-    wss.once('error', reject);
   });
   const address = wss.address();
   const boundPort = typeof address === 'object' && address ? address.port : port;
