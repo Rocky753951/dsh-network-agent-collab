@@ -5,10 +5,8 @@
         mode: lan
         relayUrl: ws://127.0.0.1:8787
         roomId: default
-        # REQUIRED: unique stable id per DSH host, e.g. agent-a / agent-b / agent-c.
-        agentId: CHANGE_ME_UNIQUE_AGENT_ID
-        # REQUIRED: unique 32+ byte secret per room. Use a secret manager in production.
-        sharedSecret: CHANGE_ME
+        # Identity, pairing secret, room and transport are created locally by the first-run wizard.
+        # These legacy values are accepted for migrations but are never required to activate.
         agentName: dsh-agent
         capabilities: [chat, tasks, messages]
         # Empty disables privileged approval; list only host ids permitted to decide it.
