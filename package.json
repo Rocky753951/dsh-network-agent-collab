@@ -8,6 +8,7 @@
     ".": "./index.js",
     "./relay": "./relay.js",
     "./core": "./src/core.js",
+    "./onboarding": "./src/onboarding.js",
     "./client": "./client.js"
   },
   "scripts": {
