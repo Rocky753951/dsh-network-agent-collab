@@ -1,0 +1,24 @@
+- insert:
+    - id: network-agent-collab
+      name: dsh-network-agent-collab
+      config:
+        mode: lan
+        relayUrl: ws://127.0.0.1:8787
+        roomId: default
+        # REQUIRED: unique stable id per DSH host, e.g. agent-a / agent-b / agent-c.
+        agentId: CHANGE_ME_UNIQUE_AGENT_ID
+        # REQUIRED: unique 32+ byte secret per room. Use a secret manager in production.
+        sharedSecret: CHANGE_ME
+        agentName: dsh-agent
+        capabilities: [chat, tasks, messages]
+        # Empty disables privileged approval; list only host ids permitted to decide it.
+        privilegedApproverIds: []
+        # Enabled by default: approved inbound requests create a local DSH agent.
+        activationRuntime:
+          enabled: true
+          # Optional agent loop overrides: { provider: ..., model: ..., maxTokens: ... }
+          agentOptions: {}
+        # Loopback-only bridge used by the DSH graphical collaboration center.
+        ui:
+          enabled: true
+          port: 8788

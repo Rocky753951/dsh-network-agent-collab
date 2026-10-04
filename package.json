@@ -1,0 +1,24 @@
+{
+  "name": "dsh-network-agent-collab",
+  "version": "0.2.1",
+  "description": "Federated multi-client agent collaboration for DeepSeek Harness",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./relay": "./relay.js",
+    "./core": "./src/core.js",
+    "./client": "./client.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "relay": "node relay.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web", "immediately": true, "inject": [] }
+  }
+}
