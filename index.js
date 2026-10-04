@@ -95,9 +95,11 @@ export function apply(ctx, config = {}) {
         const connected = (await requireLan()).isConnected();
         const federation = { mode, networkScope, lanTransport, publicRole, transportReady: connected, ...(await requireLan()).snapshot() };
         const matchedPeers = Object.values(federation.peers || {}).filter((peer) => peer.online !== false);
+        const needsTailscale = networkScope === 'lan' && lanTransport === 'tailscale';
+        const networkReady = !needsTailscale || Boolean(tailscale.configured && tailscale.self?.online);
         return { ...federation, tailscale, onboarding: {
-          stage: !tailscale.configured ? 'tailscale-unavailable' : !tailscale.self?.online ? 'tailscale-offline' : matchedPeers.length ? 'matched' : 'waiting-for-peer',
-          ready: Boolean(tailscale.configured && tailscale.self?.online && federation.transportReady && matchedPeers.length),
+          stage: !networkReady ? (!tailscale.configured ? 'tailscale-unavailable' : 'tailscale-offline') : !federation.transportReady ? 'relay-connecting' : matchedPeers.length ? 'matched' : 'waiting-for-peer',
+          ready: Boolean(networkReady && federation.transportReady && matchedPeers.length),
           matchedPeers: matchedPeers.length,
         } };
       },
@@ -116,8 +118,9 @@ export function apply(ctx, config = {}) {
         name: 'network_agent_status', description: 'Read this collaboration plugin mode and LAN federation state.', parameters: {}, output: jsonOutput,
         async execute() {
           if (mode === 'internet') return { mode, identity, transportReady: false, message: 'Tailscale scaffold only; no Internet collaboration transport.' };
-          if (!client) return { mode, identity, transportReady: false, configured: false, missing: ['sharedSecret'], message: 'Configure a sharedSecret of at least 32 bytes.' };
-          return { mode, transportReady: true, ...(await requireLan()).snapshot() };
+          if (!client) return { mode, networkScope, lanTransport, publicRole, identity, transportReady: false, configured: false, missing: ['sharedSecret'], message: 'Configure a sharedSecret of at least 32 bytes.' };
+          const federation = await requireLan();
+          return { mode, networkScope, lanTransport, publicRole, transportReady: federation.isConnected(), ...(federation.snapshot()) };
         },
       }),
       register({

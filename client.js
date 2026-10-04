@@ -56,7 +56,7 @@ window.__ModuleLoader__.load({
           e('div', null, e('h1', null, 'Agent 协作中心'), e('p', null, '多端 DSH 节点、任务与激活审批管理')),
           e('button', { className: 'nac-button', onClick: refresh, disabled: busy }, busy ? '同步中…' : '刷新')),
         error && e('div', { className: 'nac-alert', role: 'alert' }, error),
-        state && e('div', { className: ready ? 'nac-onboard nac-onboard-ready' : 'nac-onboard' }, e('strong', null, ready ? '✓ 节点已匹配' : state.onboarding?.stage === 'configuration-required' ? '配置未完成' : '自动检测中'), e('span', null, stageText[state.onboarding?.stage] || '正在检测 Tailscale 与 Relay'), e('small', null, state.tailscale?.self?.dnsName || 'Tailscale 未检测到')),
+        state && e('div', { className: ready ? 'nac-onboard nac-onboard-ready' : 'nac-onboard' }, e('strong', null, ready ? '✓ 节点已匹配' : state.onboarding?.stage === 'configuration-required' ? '配置未完成' : '自动检测中'), e('span', null, stageText[state.onboarding?.stage] || '正在检测 Tailscale 与 Relay'), e('small', null, state.networkScope === 'public' ? '公网 P2P · Host/Client' : state.lanTransport === 'tailscale' ? `Tailscale · ${state.tailscale?.self?.dnsName || '未检测到'}` : '物理局域网')),
         !state ? e(Empty, null, '正在读取协作状态…') : e(React.Fragment, null,
           e('section', { className: 'nac-stats' },
             e(Stat, { label: '本机节点', value: state.identity?.name || state.identity?.id || '—' }),
