@@ -38,9 +38,7 @@ export function apply(ctx, config = {}) {
   const agentId = configuredAgentId && !configuredAgentId.startsWith('CHANGE_ME')
     ? configuredAgentId
     : `dsh-${hostname().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || 'node'}`;
-  if (mode === 'lan' && (!config.sharedSecret || config.sharedSecret === 'CHANGE_ME' || Buffer.byteLength(config.sharedSecret) < 32)) {
-    throw new Error('network-agent-collab LAN mode requires config.sharedSecret of at least 32 bytes (not CHANGE_ME)');
-  }
+  const secretValid = typeof config.sharedSecret === 'string' && config.sharedSecret !== 'CHANGE_ME' && Buffer.byteLength(config.sharedSecret) >= 32;
   const identity = { id: agentId, name: config.agentName || `dsh-${agentId.slice(0, 8)}`, capabilities: config.capabilities || ['chat', 'tasks', 'activation'] };
   let client = null;
   let ready = Promise.resolve(null);
@@ -63,7 +61,7 @@ export function apply(ctx, config = {}) {
     agent.followup({ id: randomUUID(), role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } });
     return { started: true, sessionId, agentId: agent.id };
   };
-  if (mode === 'lan') {
+  if (mode === 'lan' && secretValid) {
     const stateDir = config.dataDir || join(homedir(), '.dsh', 'network-agent-collab');
     client = new FederationClient({
       relayUrl: config.relayUrl || 'ws://127.0.0.1:8787', roomId,
@@ -87,6 +85,7 @@ export function apply(ctx, config = {}) {
       async snapshot() {
         const tailscale = await tailscaleStatus();
         if (mode === 'internet') return { mode, identity, tailscale, transportReady: false, onboarding: { stage: 'tailscale-only', ready: false }, message: 'Tailscale discovery only.' };
+        if (!client) return { mode, identity, tailscale, transportReady: false, peers: {}, messages: [], tasks: {}, activations: {}, approvals: {}, onboarding: { stage: 'configuration-required', ready: false, missing: ['sharedSecret'], matchedPeers: 0 }, message: '请在 profile config 中设置至少 32 字节的 sharedSecret。' };
         const federation = { mode, transportReady: true, ...(await requireLan()).snapshot() };
         const matchedPeers = Object.values(federation.peers || {}).filter((peer) => peer.online !== false);
         return { ...federation, tailscale, onboarding: {
@@ -110,6 +109,7 @@ export function apply(ctx, config = {}) {
         name: 'network_agent_status', description: 'Read this collaboration plugin mode and LAN federation state.', parameters: {}, output: jsonOutput,
         async execute() {
           if (mode === 'internet') return { mode, identity, transportReady: false, message: 'Tailscale scaffold only; no Internet collaboration transport.' };
+          if (!client) return { mode, identity, transportReady: false, configured: false, missing: ['sharedSecret'], message: 'Configure a sharedSecret of at least 32 bytes.' };
           return { mode, transportReady: true, ...(await requireLan()).snapshot() };
         },
       }),
