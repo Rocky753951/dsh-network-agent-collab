@@ -1,7 +1,10 @@
-import { homedir, hostname } from 'node:os';
+import { homedir, hostname, networkInterfaces } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { FederationClient, JsonStore, dataPath } from './src/core.js';
+import { SetupState } from './src/setup-state.js';
+import { encodePairingInvite } from './src/onboarding.js';
+import { createRelay } from './relay.js';
 import { tailscaleStatus } from './src/tailscale.js';
 import { createUiHandler } from './src/ui-server.js';
 
@@ -39,6 +42,13 @@ export function apply(ctx, config = {}) {
   if (networkScope === 'lan' && !['local', 'tailscale'].includes(lanTransport)) throw new Error('network-agent-collab lanTransport must be local or tailscale');
   if (networkScope === 'public' && !['host', 'client'].includes(publicRole)) throw new Error('network-agent-collab publicRole must be host or client');
   const roomId = config.roomId || 'default';
+  const stateDir = config.dataDir || join(homedir(), '.dsh', 'network-agent-collab');
+  const setupState = new SetupState({
+    path: join(stateDir, 'setup.json'), identityPath: join(stateDir, 'identity.json'),
+    displayName: config.agentName || `dsh-${hostname().toLowerCase()}`,
+  });
+  const setupReady = setupState.load();
+  let embeddedRelay = null;
   // Stable by default on one machine; users may override when several DSH instances share a hostname.
   const configuredAgentId = config.agentId;
   const agentId = configuredAgentId && !configuredAgentId.startsWith('CHANGE_ME')
@@ -68,7 +78,6 @@ export function apply(ctx, config = {}) {
     return { started: true, sessionId, agentId: agent.id };
   };
   if (mode === 'lan' && secretValid) {
-    const stateDir = config.dataDir || join(homedir(), '.dsh', 'network-agent-collab');
     client = new FederationClient({
       relayUrl: config.relayUrl || 'ws://127.0.0.1:8787', roomId,
       secret: config.sharedSecret || 'CHANGE_ME', identity,
@@ -83,21 +92,61 @@ export function apply(ctx, config = {}) {
     if (!client) throw new Error('Internet mode is Tailscale scaffold only; collaboration messaging is available in lan mode.');
     return client;
   };
+  const localAddress = () => {
+    for (const addresses of Object.values(networkInterfaces())) {
+      const match = addresses?.find((item) => item.family === 'IPv4' && !item.internal);
+      if (match) return match.address;
+    }
+    return '127.0.0.1';
+  };
+  const startPairedClient = async () => {
+    await setupReady;
+    const pairing = setupState.pairing();
+    if (!pairing) throw new Error('PAIRING_NOT_CREATED');
+    client?.close();
+    const configured = setupState.status();
+    const dynamicIdentity = { id: configured.identity.id, name: configured.identity.name, capabilities: config.capabilities || ['chat', 'tasks', 'activation'], networkScope: configured.setup.network, lanTransport: configured.setup.lanTransport || 'local', publicRole: configured.setup.role };
+    client = new FederationClient({ relayUrl: pairing.endpoint, roomId: pairing.roomId, secret: pairing.secret, identity: dynamicIdentity, store: new JsonStore(dataPath(stateDir, pairing.roomId)), privilegedApproverIds: config.privilegedApproverIds || [], onActivation: deliverActivation });
+    ready = client.start();
+    await ready;
+    return client;
+  };
   const register = (definition) => ctx.tools.register(defineTool(definition));
   const uiConfig = config.ui || {};
 
   ctx.effect(() => {
     const api = {
+      async setupStatus() { await setupReady; return setupState.status(); },
+      async setup(args) { await setupReady; return setupState.configure(args); },
+      async hostCreate(args = {}) {
+        await setupReady;
+        const status = setupState.status();
+        if (!status.setup || status.setup.role !== 'host') throw new Error('SETUP_HOST_ROLE_REQUIRED');
+        if (!embeddedRelay) embeddedRelay = await createRelay({ port: Number.isSafeInteger(args.port) ? args.port : 0 });
+        const transport = status.setup.network === 'lan' ? status.setup.lanTransport : 'public';
+        const endpoint = typeof args.endpoint === 'string' && args.endpoint ? args.endpoint : `ws://${localAddress()}:${embeddedRelay.port}`;
+        const created = await setupState.createHost({ transport, endpoint });
+        await startPairedClient();
+        return { ...created.status, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, endpoint, relay: { running: true, port: embeddedRelay.port } };
+      },
+      async pairLeave() {
+        client?.close(); client = null; ready = Promise.resolve(null);
+        if (embeddedRelay) { await embeddedRelay.close(); embeddedRelay = null; }
+        await setupReady; return setupState.leave();
+      },
+      async relayRetry(args = {}) { return this.hostCreate(args); },
       async snapshot() {
+        await setupReady;
+        const localSetup = setupState.status();
         const tailscale = await tailscaleStatus();
-        if (mode === 'internet') return { mode, identity, tailscale, transportReady: false, onboarding: { stage: 'tailscale-only', ready: false }, message: 'Tailscale discovery only.' };
-        if (!client) return { mode, identity, networkScope, lanTransport, publicRole, tailscale, transportReady: false, peers: {}, messages: [], tasks: {}, activations: {}, approvals: {}, onboarding: { stage: 'configuration-required', ready: false, missing: ['sharedSecret'], matchedPeers: 0 }, message: '请在 profile config 中设置至少 32 字节的 sharedSecret。' };
+        if (mode === 'internet') return { mode, identity, setup: localSetup, tailscale, transportReady: false, onboarding: { stage: 'tailscale-only', ready: false }, message: 'Tailscale discovery only.' };
+        if (!client) return { mode, identity, setup: localSetup, networkScope, lanTransport, publicRole, tailscale, transportReady: false, peers: {}, messages: [], tasks: {}, activations: {}, approvals: {}, onboarding: { stage: localSetup.configured ? 'waiting-for-host' : 'setup-required', ready: false, matchedPeers: 0 }, message: localSetup.configured ? '等待创建或加入协作组。' : '请选择网络与 Host/Client 身份。' };
         const connected = (await requireLan()).isConnected();
         const federation = { mode, networkScope, lanTransport, publicRole, transportReady: connected, ...(await requireLan()).snapshot() };
         const matchedPeers = Object.values(federation.peers || {}).filter((peer) => peer.online !== false);
         const needsTailscale = networkScope === 'lan' && lanTransport === 'tailscale';
         const networkReady = !needsTailscale || Boolean(tailscale.configured && tailscale.self?.online);
-        return { ...federation, tailscale, onboarding: {
+        return { ...federation, setup: localSetup, tailscale, onboarding: {
           stage: !networkReady ? (!tailscale.configured ? 'tailscale-unavailable' : 'tailscale-offline') : !federation.transportReady ? 'relay-connecting' : matchedPeers.length ? 'matched' : 'waiting-for-peer',
           ready: Boolean(networkReady && federation.transportReady && matchedPeers.length),
           matchedPeers: matchedPeers.length,
@@ -168,7 +217,7 @@ export function apply(ctx, config = {}) {
         async execute(args) { return { published: true, id: await (await requireLan()).task(args) }; },
       }),
     ];
-    return () => { client?.close(); fallbackUi?.close(); unregisterUi(); unregister.forEach((dispose) => dispose()); };
+    return () => { client?.close(); embeddedRelay?.close(); fallbackUi?.close(); unregisterUi(); unregister.forEach((dispose) => dispose()); };
   });
 }
 apply.inject = inject;
