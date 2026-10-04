@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { encodePairingInvite } from '../src/onboarding.js';
+import { SetupState } from '../src/setup-state.js';
+
+async function state(label) {
+  const dir = await mkdtemp(join(tmpdir(), `dsh-collab-${label}-`));
+  const value = new SetupState({ path: join(dir, 'setup.json'), identityPath: join(dir, 'identity.json'), displayName: label });
+  await value.load(); return value;
+}
+
+test('client receives room material only after host approval and client confirmation', async () => {
+  const host = await state('Host');
+  const client = await state('Client');
+  await host.configure({ network: 'lan', lanTransport: 'local', role: 'host' });
+  const created = await host.createHost({ transport: 'local', endpoint: 'ws://host.local:8787', now: 1_000_000, ttlMs: 60_000 });
+  await client.configure({ network: 'lan', lanTransport: 'local', role: 'client' });
+  const prepared = await client.requestJoin({ invitation: encodePairingInvite(created.invite), code: created.pairingCode, now: 1_000_001 });
+  assert.equal(client.pairing(), null);
+  await host.receiveJoinRequest({ request: prepared.request, now: 1_000_002 });
+  const pending = host.status().pendingRequests[0];
+  assert.ok(pending);
+  const approved = await host.decideJoin({ requestId: pending.id, decision: 'approved', now: 1_000_003 });
+  assert.ok(approved.grant.secret);
+  await client.acceptJoinGrant({ grant: approved.grant });
+  assert.equal(client.pairing().roomId, host.pairing().roomId);
+  assert.equal(client.pairing().secret, host.pairing().secret);
+  assert.equal(JSON.stringify(client.status()).includes(host.pairing().secret), false);
+  await assert.rejects(() => host.receiveJoinRequest({ request: prepared.request, now: 1_000_004 }), /PAIRING_INVITE_ALREADY_USED/);
+});
+
+test('expired and rejected pairing requests cannot deliver grants', async () => {
+  const host = await state('Host'); const client = await state('Client');
+  await host.configure({ network: 'lan', role: 'host' });
+  const created = await host.createHost({ transport: 'local', endpoint: 'ws://host:1', now: 10_000, ttlMs: 30_000 });
+  await client.configure({ network: 'lan', role: 'client' });
+  await assert.rejects(() => client.requestJoin({ invitation: encodePairingInvite(created.invite), code: created.pairingCode, now: 40_001 }), /PAIRING_INVITE_INVALID/);
+  const prepared = await client.requestJoin({ invitation: encodePairingInvite(created.invite), code: created.pairingCode, now: 10_001 });
+  await host.receiveJoinRequest({ request: prepared.request, now: 10_002 });
+  const rejected = await host.decideJoin({ requestId: prepared.request.id, decision: 'rejected' });
+  assert.equal(rejected.decision, 'rejected');
+  await assert.rejects(() => client.acceptJoinGrant({ grant: {} }), /PAIRING_GRANT_INVALID/);
+});

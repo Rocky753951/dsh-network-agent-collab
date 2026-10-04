@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { FederationClient, JsonStore, dataPath } from './src/core.js';
 import { SetupState } from './src/setup-state.js';
 import { encodePairingInvite } from './src/onboarding.js';
+import { startClientPairingSignal, startHostPairingSignal } from './src/pairing-signal.js';
 import { createRelay } from './relay.js';
 import { tailscaleStatus } from './src/tailscale.js';
 import { createUiHandler } from './src/ui-server.js';
@@ -49,6 +50,9 @@ export function apply(ctx, config = {}) {
   });
   const setupReady = setupState.load();
   let embeddedRelay = null;
+  let hostSignal = null;
+  let clientSignal = null;
+  let pendingGrant = null;
   // Stable by default on one machine; users may override when several DSH instances share a hostname.
   const configuredAgentId = config.agentId;
   const agentId = configuredAgentId && !configuredAgentId.startsWith('CHANGE_ME')
@@ -111,6 +115,35 @@ export function apply(ctx, config = {}) {
     await ready;
     return client;
   };
+  // A pairing is local, durable state. Reconnect it on every plugin startup instead
+  // of requiring the user to create a new Host/group after a DSH restart.
+  const initialReady = ready;
+  const restoreReady = setupReady.then(async () => {
+    const pairing = setupState.pairing();
+    const configured = setupState.status();
+    if (!client && pairing) {
+      // A persisted Host owns its embedded ws:// relay too. Rebind its original
+      // port when possible so previously issued LAN invitations remain usable.
+      if (configured.setup?.role === 'host') {
+        try {
+          const endpoint = new URL(pairing.endpoint);
+          const port = Number(endpoint.port);
+          if (endpoint.protocol === 'ws:' && Number.isSafeInteger(port) && port > 0) {
+            embeddedRelay = await createRelay({ port });
+          }
+        } catch {
+          // The relay may already be served externally or its old port is busy;
+          // still restore the FederationClient and report the real connection state.
+        }
+      }
+      await startPairedClient();
+    } else await initialReady;
+    return client;
+  });
+  ready = restoreReady;
+  const persistedNetwork = (status) => status.setup?.network || networkScope;
+  const persistedLanTransport = (status) => status.setup?.lanTransport || lanTransport;
+  const persistedPublicRole = (status) => status.setup?.role || publicRole;
   const register = (definition) => ctx.tools.register(defineTool(definition));
   const uiConfig = config.ui || {};
 
@@ -126,7 +159,7 @@ export function apply(ctx, config = {}) {
         const transport = status.setup.network === 'lan' ? status.setup.lanTransport : 'public';
         const tailscale = transport === 'tailscale' ? await tailscaleStatus() : null;
         const advertisedHost = transport === 'tailscale'
-          ? (tailscale?.self?.dnsName || tailscale?.self?.addresses?.[0])
+          ? String(tailscale?.self?.dnsName || tailscale?.self?.addresses?.[0] || '').replace(/\.+$/, '')
           : localAddress();
         if (transport === 'tailscale' && !advertisedHost) throw new Error('TAILSCALE_NOT_READY');
         // No service is used for public NAT traversal: a reachable WSS endpoint is required.
@@ -142,18 +175,46 @@ export function apply(ctx, config = {}) {
         await setupReady; return setupState.leave();
       },
       async relayRetry(args = {}) { return this.hostCreate(args); },
-      async snapshot() {
+      async joinRequest(args = {}) {
         await setupReady;
+        const role = setupState.status().setup?.role;
+        if (role === 'client') return setupState.requestJoin({ ...args, invitation: args.invitation || args.invite, code: args.code || args.pairCode });
+        if (role === 'host') return setupState.receiveJoinRequest(args);
+        throw new Error('SETUP_ROLE_REQUIRED');
+      },
+      async joinDecide(args = {}) {
+        await setupReady;
+        const role = setupState.status().setup?.role;
+        if (role === 'host') return setupState.decideJoin(args);
+        if (role === 'client') { const result = await setupState.acceptJoinGrant(args); await startPairedClient(); return result; }
+        throw new Error('SETUP_ROLE_REQUIRED');
+      },
+      async membersRemove(args = {}) { await setupReady; return setupState.removeMember(args); },
+      async snapshot() {
+        await restoreReady;
         const localSetup = setupState.status();
+        const currentNetworkScope = persistedNetwork(localSetup);
+        const currentLanTransport = persistedLanTransport(localSetup);
+        const currentPublicRole = persistedPublicRole(localSetup);
+        const currentIdentity = localSetup.configured ? { ...identity, id: localSetup.identity.id, name: localSetup.identity.name, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole } : identity;
         const tailscale = await tailscaleStatus();
-        if (mode === 'internet') return { mode, identity, setup: localSetup, tailscale, transportReady: false, onboarding: { stage: 'tailscale-only', ready: false }, message: 'Tailscale discovery only.' };
-        if (!client) return { mode, identity, setup: localSetup, networkScope, lanTransport, publicRole, tailscale, transportReady: false, peers: {}, messages: [], tasks: {}, activations: {}, approvals: {}, onboarding: { stage: localSetup.configured ? 'waiting-for-host' : 'setup-required', ready: false, matchedPeers: 0 }, message: localSetup.configured ? '等待创建或加入协作组。' : '请选择网络与 Host/Client 身份。' };
-        const connected = (await requireLan()).isConnected();
-        const federation = { mode, networkScope, lanTransport, publicRole, transportReady: connected, ...(await requireLan()).snapshot() };
+        if (mode === 'internet') return { mode, identity: currentIdentity, setup: localSetup, tailscale, transportReady: false, onboarding: { stage: 'tailscale-only', ready: false }, message: 'Tailscale discovery only.' };
+        if (!client) {
+          const stage = !localSetup.configured
+            ? 'setup-required'
+            : currentPublicRole === 'host' ? 'host-not-created' : 'awaiting-invitation';
+          const message = !localSetup.configured
+            ? '请选择网络与 Host/Client 身份。'
+            : currentPublicRole === 'host' ? '已选择 Host；请创建协作组并生成配对码。' : '已选择 Client；请粘贴 Host 邀请并完成配对。';
+          return { mode, identity: currentIdentity, setup: localSetup, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole, tailscale, transportReady: false, peers: {}, messages: [], tasks: {}, activations: {}, approvals: {}, onboarding: { stage, ready: false, matchedPeers: 0 }, message };
+        }
+        const federationClient = await requireLan();
+        const connected = federationClient.isConnected();
+        const federation = { mode, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole, transportReady: connected, ...(federationClient.snapshot()) };
         const matchedPeers = Object.values(federation.peers || {}).filter((peer) => peer.online !== false);
-        const needsTailscale = networkScope === 'lan' && lanTransport === 'tailscale';
+        const needsTailscale = currentNetworkScope === 'lan' && currentLanTransport === 'tailscale';
         const networkReady = !needsTailscale || Boolean(tailscale.configured && tailscale.self?.online);
-        return { ...federation, setup: localSetup, tailscale, onboarding: {
+        return { ...federation, identity: currentIdentity, setup: localSetup, tailscale, onboarding: {
           stage: !networkReady ? (!tailscale.configured ? 'tailscale-unavailable' : 'tailscale-offline') : !federation.transportReady ? 'relay-connecting' : matchedPeers.length ? 'matched' : 'waiting-for-peer',
           ready: Boolean(networkReady && federation.transportReady && matchedPeers.length),
           matchedPeers: matchedPeers.length,
@@ -173,10 +234,19 @@ export function apply(ctx, config = {}) {
       register({
         name: 'network_agent_status', description: 'Read this collaboration plugin mode and LAN federation state.', parameters: {}, output: jsonOutput,
         async execute() {
-          if (mode === 'internet') return { mode, identity, transportReady: false, message: 'Tailscale scaffold only; no Internet collaboration transport.' };
-          if (!client) return { mode, networkScope, lanTransport, publicRole, identity, transportReady: false, configured: false, missing: ['sharedSecret'], message: 'Configure a sharedSecret of at least 32 bytes.' };
+          await restoreReady;
+          const localSetup = setupState.status();
+          const currentNetworkScope = persistedNetwork(localSetup);
+          const currentLanTransport = persistedLanTransport(localSetup);
+          const currentPublicRole = persistedPublicRole(localSetup);
+          const currentIdentity = localSetup.configured ? { ...identity, id: localSetup.identity.id, name: localSetup.identity.name, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole } : identity;
+          if (mode === 'internet') return { mode, identity: currentIdentity, transportReady: false, message: 'Tailscale scaffold only; no Internet collaboration transport.' };
+          if (!client) {
+            const stage = !localSetup.configured ? 'setup-required' : currentPublicRole === 'host' ? 'host-not-created' : 'awaiting-invitation';
+            return { mode, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole, identity: currentIdentity, transportReady: false, configured: localSetup.configured, missing: localSetup.configured ? ['pairing'] : ['setup'], onboarding: { stage, ready: false }, message: !localSetup.configured ? 'Select network and Host/Client identity.' : currentPublicRole === 'host' ? 'Create a host group to start collaboration.' : 'Join a Host invitation to start collaboration.' };
+          }
           const federation = await requireLan();
-          return { mode, networkScope, lanTransport, publicRole, transportReady: federation.isConnected(), ...(federation.snapshot()) };
+          return { mode, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole, identity: currentIdentity, transportReady: federation.isConnected(), ...(federation.snapshot()) };
         },
       }),
       register({

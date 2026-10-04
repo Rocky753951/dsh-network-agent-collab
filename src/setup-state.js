@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { createPairingInvite, loadOrCreateLocalIdentity } from './onboarding.js';
+import { createPairingInvite, decodePairingInvite, encodePairingInvite, loadOrCreateLocalIdentity, verifyPairingCode } from './onboarding.js';
 
 const VERSION = 1;
 const NETWORKS = new Set(['lan', 'public']);
@@ -16,7 +16,7 @@ async function saveJson(path, value) {
 }
 
 function defaultState() {
-  return { version: VERSION, setup: null, group: null };
+  return { version: VERSION, setup: null, group: null, pendingRequests: {}, pendingJoin: null, usedInviteIds: [], members: {} };
 }
 
 function redactGroup(group) {
@@ -58,11 +58,24 @@ export class SetupState {
 
   status() {
     if (!this.identity || !this.state) throw new Error('SETUP_STATE_NOT_LOADED');
+    const isHost = this.state.setup?.role === 'host';
+    const activeInvite = isHost && this.state.group?.invites
+      ? Object.values(this.state.group.invites).find((inv) => !this.state.usedInviteIds?.includes(inv.id) && inv.expiresAt > Date.now())
+      : null;
     return Object.freeze({
       configured: Boolean(this.state.setup),
       identity: { id: this.identity.id, name: this.identity.name, createdAt: this.identity.createdAt },
       setup: this.state.setup ? { ...this.state.setup } : null,
       group: redactGroup(this.state.group),
+      activeInvite: activeInvite ? {
+        id: activeInvite.id,
+        pairingCode: activeInvite.code,
+        invitation: encodePairingInvite(activeInvite),
+        expiresAt: activeInvite.expiresAt,
+      } : null,
+      pendingRequests: Object.values(this.state.pendingRequests || {}).map(({ id, clientId, clientName, inviteId, createdAt }) => ({ id, clientId, clientName, inviteId, createdAt })),
+      pendingJoin: this.state.pendingJoin ? { id: this.state.pendingJoin.id, hostId: this.state.pendingJoin.invite.hostId, hostName: this.state.pendingJoin.invite.hostName, endpoint: this.state.pendingJoin.invite.endpoint, expiresAt: this.state.pendingJoin.invite.expiresAt } : null,
+      members: Object.values(this.state.members || {}).map(({ id, name, approvedAt }) => ({ id, name, approvedAt })),
     });
   }
 
@@ -73,7 +86,7 @@ export class SetupState {
     if (network === 'public' && lanTransport !== undefined) throw new Error('SETUP_PUBLIC_LAN_TRANSPORT_FORBIDDEN');
     if (groupName !== undefined && (typeof groupName !== 'string' || !groupName.trim() || groupName.length > 80)) throw new Error('SETUP_GROUP_NAME_INVALID');
     this.state.setup = Object.freeze({ network, role, ...(network === 'lan' ? { lanTransport: lanTransport || 'local' } : {}), ...(groupName ? { groupName: groupName.trim() } : {}) });
-    this.state.group = null;
+    this.state.group = null; this.state.pendingRequests = {}; this.state.pendingJoin = null; this.state.usedInviteIds = []; this.state.members = {};
     await this.persist();
     return this.status();
   }
@@ -85,11 +98,71 @@ export class SetupState {
     if (typeof endpoint !== 'string' || !endpoint) throw new Error('SETUP_ENDPOINT_REQUIRED');
     const secret = randomBytes(32).toString('base64url');
     const roomId = randomUUID();
-    const group = { id: roomId, name: this.state.setup.groupName || this.identity.name, transport, endpoint, secret, createdAt: now, expiresAt: now + ttlMs };
     const invite = createPairingInvite({ identity: this.identity, endpoint, now, ttlMs });
+    const group = { id: roomId, name: this.state.setup.groupName || this.identity.name, transport, endpoint, secret, createdAt: now, expiresAt: now + ttlMs, invites: { [invite.id]: invite } };
     this.state.group = group;
+    this.state.pendingRequests = {}; this.state.usedInviteIds = []; this.state.members = {};
     await this.persist();
     return Object.freeze({ status: this.status(), invite, pairingCode: invite.code, roomId });
+  }
+
+  /** Client prepares a request without receiving any room material. */
+  async requestJoin({ invitation, code, now = Date.now() } = {}) {
+    if (this.state?.setup?.role !== 'client') throw new Error('SETUP_CLIENT_ROLE_REQUIRED');
+    const invite = decodePairingInvite(invitation, now);
+    const mismatch = verifyPairingCode(invite, code, now);
+    if (mismatch) throw new Error(`PAIRING_CODE_INVALID: ${mismatch}`);
+    if (this.state.pendingJoin?.invite?.id === invite.id) throw new Error('PAIRING_REQUEST_ALREADY_PENDING');
+    const request = { id: randomUUID(), invite, code, clientId: this.identity.id, clientName: this.identity.name, createdAt: now };
+    this.state.pendingJoin = request;
+    await this.persist();
+    return { request: { id: request.id, inviteId: invite.id, clientId: request.clientId, clientName: request.clientName, createdAt: request.createdAt, invitation, code } };
+  }
+
+  /** Host validates a copied request, but deliberately does not disclose a secret. */
+  async receiveJoinRequest({ request, now = Date.now() } = {}) {
+    if (this.state?.setup?.role !== 'host' || !this.state.group) throw new Error('SETUP_HOST_GROUP_REQUIRED');
+    if (!request || typeof request !== 'object' || typeof request.inviteId !== 'string' || typeof request.code !== 'string' || typeof request.clientId !== 'string' || !request.clientId) throw new Error('PAIRING_REQUEST_INVALID');
+    const invite = this.state.group.invites?.[request.inviteId];
+    const mismatch = verifyPairingCode(invite, request.code, now);
+    if (mismatch) throw new Error(`PAIRING_REQUEST_REJECTED: ${mismatch}`);
+    if (this.state.usedInviteIds.includes(invite.id)) throw new Error('PAIRING_INVITE_ALREADY_USED');
+    const pending = { id: request.id || randomUUID(), inviteId: invite.id, clientId: request.clientId, clientName: typeof request.clientName === 'string' ? request.clientName.slice(0, 80) : request.clientId, createdAt: now };
+    this.state.pendingRequests[pending.id] = pending;
+    await this.persist();
+    return { acceptedForReview: true, request: { ...pending } };
+  }
+
+  /** Host decision is the only point at which encrypted-room material is released. */
+  async decideJoin({ requestId, decision, now = Date.now() } = {}) {
+    if (this.state?.setup?.role !== 'host' || !this.state.group) throw new Error('SETUP_HOST_GROUP_REQUIRED');
+    if (!['approved', 'rejected'].includes(decision)) throw new Error('PAIRING_DECISION_INVALID');
+    const request = this.state.pendingRequests?.[requestId];
+    if (!request) throw new Error('PAIRING_REQUEST_NOT_FOUND');
+    delete this.state.pendingRequests[requestId];
+    if (decision === 'rejected') { await this.persist(); return { decision, requestId }; }
+    const invite = this.state.group.invites?.[request.inviteId];
+    if (!invite || this.state.usedInviteIds.includes(invite.id) || invite.expiresAt <= now) throw new Error('PAIRING_INVITE_UNAVAILABLE');
+    this.state.usedInviteIds.push(invite.id);
+    this.state.members[request.clientId] = { id: request.clientId, name: request.clientName, approvedAt: now };
+    await this.persist();
+    return { decision, requestId, grant: { requestId, hostId: this.identity.id, hostName: this.identity.name, endpoint: this.state.group.endpoint, roomId: this.state.group.id, secret: this.state.group.secret, approvedAt: now } };
+  }
+
+  /** Client explicitly confirms and stores a Host-issued approved grant. */
+  async acceptJoinGrant({ grant } = {}) {
+    if (this.state?.setup?.role !== 'client' || !this.state.pendingJoin) throw new Error('PAIRING_CLIENT_CONFIRMATION_REQUIRED');
+    if (!grant || grant.requestId !== this.state.pendingJoin.id || typeof grant.roomId !== 'string' || typeof grant.secret !== 'string' || Buffer.from(grant.secret, 'base64url').length < 32 || typeof grant.endpoint !== 'string') throw new Error('PAIRING_GRANT_INVALID');
+    this.state.group = { id: grant.roomId, name: grant.hostName || grant.hostId, transport: this.state.setup.network === 'lan' ? this.state.setup.lanTransport : 'public', endpoint: grant.endpoint, secret: grant.secret, createdAt: grant.approvedAt || Date.now(), joinedAt: Date.now(), hostId: grant.hostId };
+    this.state.pendingJoin = null;
+    await this.persist();
+    return this.status();
+  }
+
+  async removeMember({ memberId } = {}) {
+    if (this.state?.setup?.role !== 'host' || typeof memberId !== 'string') throw new Error('PAIRING_MEMBER_INVALID');
+    if (!this.state.members?.[memberId]) throw new Error('PAIRING_MEMBER_NOT_FOUND');
+    delete this.state.members[memberId]; await this.persist(); return this.status();
   }
 
   pairing() {
