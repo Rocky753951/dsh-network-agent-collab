@@ -50,13 +50,13 @@ window.__ModuleLoader__.load({
       const activations = Object.values(state?.activations || {}).filter((x) => x.target === state?.identity?.id);
       const pending = activations.filter((x) => x.status === 'pending');
       const ready = Boolean(state?.onboarding?.ready);
-      const stageText = { 'tailscale-unavailable': '正在等待 Tailscale 登录', 'tailscale-offline': 'Tailscale 未在线', 'waiting-for-peer': '正在等待并匹配其他 DSH 节点', matched: '节点已匹配，可选择协作方式' };
+      const stageText = { 'configuration-required': '需要配置 sharedSecret', 'tailscale-only': 'Tailscale 已检测（当前仅状态模式）', 'tailscale-unavailable': '正在等待 Tailscale 登录', 'tailscale-offline': 'Tailscale 未在线', 'relay-connecting': '正在连接 Relay', 'waiting-for-peer': '正在等待并匹配其他 DSH 节点', matched: '节点已匹配，可选择协作方式' };
       return e('main', { className: 'nac-page' },
         e('header', { className: 'nac-header' },
           e('div', null, e('h1', null, 'Agent 协作中心'), e('p', null, '多端 DSH 节点、任务与激活审批管理')),
           e('button', { className: 'nac-button', onClick: refresh, disabled: busy }, busy ? '同步中…' : '刷新')),
         error && e('div', { className: 'nac-alert', role: 'alert' }, error),
-        state && e('div', { className: ready ? 'nac-onboard nac-onboard-ready' : 'nac-onboard' }, e('strong', null, ready ? '✓ Tailscale 节点已匹配' : '自动检测中'), e('span', null, stageText[state.onboarding?.stage] || '正在检测 Tailscale 与 Relay'), e('small', null, state.tailscale?.self?.dnsName || 'Tailscale 未检测到')),
+        state && e('div', { className: ready ? 'nac-onboard nac-onboard-ready' : 'nac-onboard' }, e('strong', null, ready ? '✓ 节点已匹配' : state.onboarding?.stage === 'configuration-required' ? '配置未完成' : '自动检测中'), e('span', null, stageText[state.onboarding?.stage] || '正在检测 Tailscale 与 Relay'), e('small', null, state.tailscale?.self?.dnsName || 'Tailscale 未检测到')),
         !state ? e(Empty, null, '正在读取协作状态…') : e(React.Fragment, null,
           e('section', { className: 'nac-stats' },
             e(Stat, { label: '本机节点', value: state.identity?.name || state.identity?.id || '—' }),

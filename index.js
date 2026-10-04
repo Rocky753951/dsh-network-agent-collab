@@ -32,6 +32,12 @@ export const inject = ['tools', 'agentLoop', 'webServer'];
 export function apply(ctx, config = {}) {
   const mode = config.mode || 'lan';
   if (!['lan', 'internet'].includes(mode)) throw new Error('network-agent-collab mode must be lan or internet');
+  const networkScope = config.networkScope || 'lan';
+  const lanTransport = config.lanTransport || 'local';
+  const publicRole = config.publicRole || 'client';
+  if (!['lan', 'public'].includes(networkScope)) throw new Error('network-agent-collab networkScope must be lan or public');
+  if (networkScope === 'lan' && !['local', 'tailscale'].includes(lanTransport)) throw new Error('network-agent-collab lanTransport must be local or tailscale');
+  if (networkScope === 'public' && !['host', 'client'].includes(publicRole)) throw new Error('network-agent-collab publicRole must be host or client');
   const roomId = config.roomId || 'default';
   // Stable by default on one machine; users may override when several DSH instances share a hostname.
   const configuredAgentId = config.agentId;
@@ -39,7 +45,7 @@ export function apply(ctx, config = {}) {
     ? configuredAgentId
     : `dsh-${hostname().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || 'node'}`;
   const secretValid = typeof config.sharedSecret === 'string' && config.sharedSecret !== 'CHANGE_ME' && Buffer.byteLength(config.sharedSecret) >= 32;
-  const identity = { id: agentId, name: config.agentName || `dsh-${agentId.slice(0, 8)}`, capabilities: config.capabilities || ['chat', 'tasks', 'activation'] };
+  const identity = { id: agentId, name: config.agentName || `dsh-${agentId.slice(0, 8)}`, capabilities: config.capabilities || ['chat', 'tasks', 'activation'], networkScope, lanTransport, publicRole };
   let client = null;
   let ready = Promise.resolve(null);
   const activationRuntime = config.activationRuntime || {};
@@ -85,8 +91,9 @@ export function apply(ctx, config = {}) {
       async snapshot() {
         const tailscale = await tailscaleStatus();
         if (mode === 'internet') return { mode, identity, tailscale, transportReady: false, onboarding: { stage: 'tailscale-only', ready: false }, message: 'Tailscale discovery only.' };
-        if (!client) return { mode, identity, tailscale, transportReady: false, peers: {}, messages: [], tasks: {}, activations: {}, approvals: {}, onboarding: { stage: 'configuration-required', ready: false, missing: ['sharedSecret'], matchedPeers: 0 }, message: '请在 profile config 中设置至少 32 字节的 sharedSecret。' };
-        const federation = { mode, transportReady: true, ...(await requireLan()).snapshot() };
+        if (!client) return { mode, identity, networkScope, lanTransport, publicRole, tailscale, transportReady: false, peers: {}, messages: [], tasks: {}, activations: {}, approvals: {}, onboarding: { stage: 'configuration-required', ready: false, missing: ['sharedSecret'], matchedPeers: 0 }, message: '请在 profile config 中设置至少 32 字节的 sharedSecret。' };
+        const connected = (await requireLan()).isConnected();
+        const federation = { mode, networkScope, lanTransport, publicRole, transportReady: connected, ...(await requireLan()).snapshot() };
         const matchedPeers = Object.values(federation.peers || {}).filter((peer) => peer.online !== false);
         return { ...federation, tailscale, onboarding: {
           stage: !tailscale.configured ? 'tailscale-unavailable' : !tailscale.self?.online ? 'tailscale-offline' : matchedPeers.length ? 'matched' : 'waiting-for-peer',

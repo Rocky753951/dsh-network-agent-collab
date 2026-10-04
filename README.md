@@ -1,6 +1,6 @@
 # DSH Network Agent Collab
 
-多端 DSH Agent 协作插件，分为两种模式：**局域网（已实现）**与**互联网 / Tailscale（仅接入与状态检测，暂不传递协作业务）**。
+多端 DSH Agent 协作插件，连接方式分为两大类：**局域网**（普通局域网或 Tailscale 虚拟局域网）与**公网**（一台电脑作为 Host/Relay，其余电脑作为 Client）。
 
 ## 已实现：局域网协作
 
@@ -29,9 +29,33 @@
 
 审批帧必须匹配已存在、仍为 `pending` 的请求，且只能由该请求的目标 Agent 签发；其他同房间节点的伪造审批会被忽略。
 
-## 互联网模式：Tailscale 脚手架
+## 连接方式
 
-设置 `mode: internet` 后，插件**不会建立协作消息通道**。它仅提供 `network_agent_tailscale_status`，通过只读 `tailscale status --json` 返回本机、Tailnet 节点及连接状态，为后续 Internet transport 做准备。
+### 局域网（普通网络或 Tailscale）
+
+```yaml
+networkScope: lan
+lanTransport: local       # 普通局域网
+# 或 lanTransport: tailscale
+relayUrl: ws://主机地址:8787
+```
+
+Tailscale 是局域网的子选项，不是独立的公网模式。
+
+### 公网 Host/Client
+
+一台电脑运行 Relay 并作为主机，其他电脑连接它：
+
+```yaml
+networkScope: public
+publicRole: host           # 主机电脑
+# publicRole: client       # 其他电脑
+relayUrl: ws://主机公网地址:8787
+```
+
+公网使用时应配置端口转发、防火墙规则，并在生产环境使用 `wss://`、设备配对和 TLS。Host 下线时 Client 无法继续通信。
+
+旧配置 `mode: internet` 仍保留兼容性，但不再推荐；请使用上面的 `networkScope`。
 
 ## 安装
 

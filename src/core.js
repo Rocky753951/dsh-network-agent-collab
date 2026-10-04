@@ -122,6 +122,7 @@ export class FederationClient {
   }
   async start() { this.state = await this.store.load(defaultState(this.identity)); this.connect(); return this; }
   snapshot() { return structuredClone(this.state); }
+  isConnected() { return this.socket?.readyState === this.WebSocketImpl.OPEN; }
   async persist() { await this.store.save(this.state); this.onChange(this.snapshot()); }
   async deliverActivation(activationId) {
     const activation = this.state.activations[activationId];
