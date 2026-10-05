@@ -238,12 +238,9 @@ export function apply(ctx, config = {}) {
         if (status.setup?.role !== 'host' || !status.activeInvite) throw new Error('HOST_CONNECTION_UNAVAILABLE');
         if (status.setup.network === 'public') {
           if (!directPeer || !directOffer) {
-            directPeer?.close();
-            directPeer = new DirectPeer({ role: 'host' });
-            directOffer = await directPeer.createOffer();
-            const created = await setupState.createHost({ transport: 'public', endpoint: 'direct://manual' });
-            await startPairedClient();
-            return { ...created.status.activeInvite, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, directOffer };
+            // WebRTC PeerConnections cannot be restored after a DSH process restart.
+            // Do not silently call createHost(): that would discard members and requests.
+            throw new Error('PUBLIC_HOST_RECREATE_REQUIRED');
           }
           return { ...status.activeInvite, directOffer };
         }
