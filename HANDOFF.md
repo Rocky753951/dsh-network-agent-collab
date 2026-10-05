@@ -9,7 +9,7 @@ https://github.com/Rocky753951/dsh-network-agent-collab
 ## 当前版本
 
 - 版本：0.4.0
-- 最新提交：5e792b1（后续交接文档提交会更新）
+- 最新提交：687f579
 - 包文件：`dsh-network-agent-collab-0.4.0.tgz`
 
 ## 已实现
