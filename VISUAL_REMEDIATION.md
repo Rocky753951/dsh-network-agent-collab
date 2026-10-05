@@ -455,7 +455,7 @@ Offer、Answer、Grant 和消息输入仍较多依赖 placeholder。增加显式
 - `.nac-button` 仅保留布局属性；四种变体使用 `.nac-button.nac-button-*` 高特异性规则。
 - `.nac-page` 统一使用 `--nac-*` 背景、颜色和 Apple 字体栈。
 - 流程返回/退出统一使用 `BackButton`；退出使用危险样式。
-- 步骤条统一为“网络 → 身份 → 确认 → 配对 → 完成”，并覆盖 Host、Client、审批和 Dashboard 页面。
+- 根据用户验收反馈移除顶部步骤条；流程通过页面标题、主按钮和返回操作表达，不向客户展示内部步骤编号。
 - Offer、申请包、Grant 使用 `CodeBlock`；可编辑信令与表单字段补充显式 label、`aria-label` 和焦点样式。
 - 配对码、邀请信息和审批状态继续保持权限确认及安全校验不变。
 
@@ -471,6 +471,13 @@ Offer、Answer、Grant 和消息输入仍较多依赖 placeholder。增加显式
 - 所有新增信令输入保持显式 label、`aria-label`、键盘焦点样式。
 
 本轮重新执行 `node --check client.js`、`npm test`（26/26）和 `git diff --check`；未改变配对认证、审批和权限逻辑。
+
+## 12. 用户体验复评补充
+
+- 移除顶部五步进度条：该信息属于内部流程，不向普通客户展示。
+- Host 确认后主操作改为“发布 Host 并生成配对码”。
+- 将“Client Answer + 请求包 JSON”改为“对方返回的连接信息”，并提供普通用户可理解的粘贴提示与“确认对方连接”按钮。
+- LAN 未配置 `sharedSecret` 时自动在受保护的 profile 数据目录生成并复用 256-bit secret；只有显式提供无效 secret 才拒绝启动，避免 DSH 因插件默认启用而启动失败。
 
 ## 11. 独立验收报告复核
 

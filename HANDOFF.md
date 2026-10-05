@@ -21,6 +21,7 @@ https://github.com/Rocky753951/dsh-network-agent-collab
 - 权限等级：仅通信、唤醒 Agent 需审批、无条件信任。
 - Client 与 Host 的 Agent 一对一匹配限制。
 - 公网 IPv4 WebRTC DataChannel 直连基础：STUN、手动 Offer/Answer、Grant 确认。
+- LAN 未提供 `sharedSecret` 时自动生成并持久化受保护的本地 secret；无需手工配置即可启动。
 - 不依赖 V2Ray、IPv6、付费 Relay 或 TURN。
 
 ## 验证

@@ -1,5 +1,6 @@
 import { homedir, hostname, networkInterfaces } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FederationClient, JsonStore, dataPath } from './src/core.js';
 import { SetupState } from './src/setup-state.js';
@@ -12,6 +13,18 @@ import { createUiHandler } from './src/ui-server.js';
 
 const asText = (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }];
 const jsonOutput = { schema: {}, render: asText };
+
+function ensureLocalSharedSecret(stateDir) {
+  const path = join(stateDir, 'shared-secret');
+  try {
+    const value = readFileSync(path, 'utf8').trim();
+    if (Buffer.byteLength(value) >= 32) return value;
+  } catch {}
+  const value = randomBytes(32).toString('base64url');
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(path, value, { mode: 0o600 });
+  return value;
+}
 
 // Local implementation keeps linked workspace bundles independent of profile node_modules.
 function defineTool({ parameters, output, execute, ...definition }) {
@@ -44,10 +57,12 @@ export function apply(ctx, config = {}) {
   if (!['lan', 'public'].includes(networkScope)) throw new Error('network-agent-collab networkScope must be lan or public');
   if (networkScope === 'lan' && !['local', 'tailscale'].includes(lanTransport)) throw new Error('network-agent-collab lanTransport must be local or tailscale');
   if (networkScope === 'public' && !['host', 'client'].includes(publicRole)) throw new Error('network-agent-collab publicRole must be host or client');
+  const hasSharedSecret = config.sharedSecret !== undefined;
   const secretValid = typeof config.sharedSecret === 'string' && config.sharedSecret !== 'CHANGE_ME' && Buffer.byteLength(config.sharedSecret) >= 32;
-  if (mode === 'lan' && !secretValid) throw new Error('network-agent-collab LAN mode requires sharedSecret of at least 32 bytes');
+  if (mode === 'lan' && hasSharedSecret && !secretValid) throw new Error('network-agent-collab LAN mode sharedSecret must be at least 32 bytes when provided');
   const roomId = config.roomId || 'default';
   const stateDir = config.dataDir || join(homedir(), '.dsh', 'network-agent-collab');
+  const effectiveSharedSecret = mode === 'lan' ? (config.sharedSecret || ensureLocalSharedSecret(stateDir)) : config.sharedSecret;
   const setupState = new SetupState({
     path: join(stateDir, 'setup.json'), identityPath: join(stateDir, 'identity.json'),
     displayName: config.agentName || `dsh-${hostname().toLowerCase()}`,
@@ -86,10 +101,10 @@ export function apply(ctx, config = {}) {
     agent.followup({ id: randomUUID(), role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } });
     return { started: true, sessionId, agentId: agent.id };
   };
-  if (mode === 'lan' && secretValid) {
+  if (mode === 'lan') {
     client = new FederationClient({
       relayUrl: config.relayUrl || 'ws://127.0.0.1:8787', roomId,
-      secret: config.sharedSecret || 'CHANGE_ME', identity,
+      secret: effectiveSharedSecret, identity,
       store: new JsonStore(dataPath(stateDir, roomId)),
       privilegedApproverIds: config.privilegedApproverIds || [],
       onActivation: deliverActivation,

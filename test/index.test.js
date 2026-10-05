@@ -57,12 +57,16 @@ test('inbound approved activation creates a local agent and submits its prompt',
   }
 });
 
-test('plugin refuses LAN mode without a sufficiently long shared secret', () => {
-  const ctx = { agentLoop: { create() {} }, tools: { register() {} }, effect() {} };
-  for (const sharedSecret of [undefined, 'short', '1234567890123456789012345678901']) {
+test('plugin starts LAN setup without manual secrets and rejects invalid explicit secrets', () => {
+  let dispose;
+  const ctx = { agentLoop: { create() {} }, tools: { register() { return () => {}; } }, effect(callback) { dispose = callback(); return dispose; } };
+  apply(ctx, { mode: 'lan' });
+  assert.equal(typeof dispose, 'function');
+  dispose();
+  for (const sharedSecret of ['short', '1234567890123456789012345678901', 'CHANGE_ME']) {
     assert.throws(
       () => apply(ctx, { mode: 'lan', sharedSecret }),
-      /LAN mode requires sharedSecret of at least 32 bytes/,
+      /LAN mode sharedSecret must be at least 32 bytes when provided/,
     );
   }
 });
