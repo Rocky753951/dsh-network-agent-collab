@@ -42,7 +42,7 @@ export function createUiHandler(api, prefix = '') {
       const args = await bodyOf(req);
       const routes = {
         '/approve': 'approve', '/message': 'message', '/activate': 'activate', '/task': 'task',
-        '/setup': 'setup', '/host/create': 'hostCreate', '/join/request': 'joinRequest',
+        '/setup': 'setup', '/host/create': 'hostCreate', '/host/connection': 'hostConnectionInfo', '/join/request': 'joinRequest',
         '/join/decide': 'joinDecide', '/direct/offer': 'directOffer', '/direct/answer': 'directAnswer', '/direct/grant': 'directGrant',
         '/members/remove': 'membersRemove', '/pair/leave': 'pairLeave',
         '/relay/retry': 'relayRetry',

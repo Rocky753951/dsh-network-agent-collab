@@ -137,6 +137,16 @@ window.__ModuleLoader__.load({
 
       const activeInvite = hostInfo || state?.setup?.activeInvite;
       const pendingJoinRequests = state?.setup?.pendingRequests || [];
+       React.useEffect(() => {
+         if (!savedSetup || savedSetup.role !== 'host' || !activeInvite || hostJoinLink) return;
+         run(async () => {
+           const connection = await call('/host/connection', {});
+           const offer = connection.directOffer;
+           if (offer) setHostDirectOffer(JSON.stringify(offer, null, 2));
+           setHostJoinLink(await createJoinLink({ invitation: connection.invitation, offer, code: connection.pairingCode, expiresAt: connection.expiresAt }));
+           await refresh();
+         });
+       }, [savedSetup?.role, savedSetup?.network, activeInvite?.id, hostJoinLink]);
       const decideJoin = (requestId, decision) => run(async () => {
         const result = await call('/join/decide', { requestId, decision, duration, permissionLevel });
         if (result.directGrant) setDirectGrant(JSON.stringify(result.directGrant, null, 2));

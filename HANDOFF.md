@@ -8,9 +8,9 @@ https://github.com/Rocky753951/dsh-network-agent-collab
 
 ## 当前版本
 
-- 版本：0.4.4
+- 版本：0.4.5
 - 最新提交：见仓库 `git log -1`（本交接文档随发布提交同步）
-- 包文件：`dsh-network-agent-collab-0.4.4.tgz`
+- 包文件：`dsh-network-agent-collab-0.4.5.tgz`
 
 ## 已实现
 
@@ -43,5 +43,5 @@ Host 生成 Offer；Client 粘贴 Offer 并生成申请包；Host 粘贴 Answer�
 ## 发布包
 
 ```text
-https://github.com/Rocky753951/dsh-network-agent-collab/raw/main/dsh-network-agent-collab-0.4.4.tgz
+https://github.com/Rocky753951/dsh-network-agent-collab/raw/main/dsh-network-agent-collab-0.4.5.tgz
 ```

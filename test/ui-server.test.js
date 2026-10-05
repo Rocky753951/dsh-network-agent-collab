@@ -11,7 +11,7 @@ async function withServer(api, run) {
 }
 
 for (const [path, method] of [
-  ['/setup', 'setup'], ['/host/create', 'hostCreate'], ['/join/request', 'joinRequest'],
+  ['/setup', 'setup'], ['/host/create', 'hostCreate'], ['/host/connection', 'hostConnectionInfo'], ['/join/request', 'joinRequest'],
   ['/join/decide', 'joinDecide'], ['/members/remove', 'membersRemove'], ['/pair/leave', 'pairLeave'], ['/relay/retry', 'relayRetry'],
 ]) test(`routes POST ${path} to ${method}`, async () => {
   const calls = [];

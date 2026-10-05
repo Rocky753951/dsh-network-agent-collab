@@ -232,6 +232,23 @@ export function apply(ctx, config = {}) {
         await startHostSignal(created.invite);
         return { ...created.status, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, endpoint, relay: { running: true, port: embeddedRelay.port } };
       },
+      async hostConnectionInfo() {
+        await setupReady;
+        const status = setupState.status();
+        if (status.setup?.role !== 'host' || !status.activeInvite) throw new Error('HOST_CONNECTION_UNAVAILABLE');
+        if (status.setup.network === 'public') {
+          if (!directPeer || !directOffer) {
+            directPeer?.close();
+            directPeer = new DirectPeer({ role: 'host' });
+            directOffer = await directPeer.createOffer();
+            const created = await setupState.createHost({ transport: 'public', endpoint: 'direct://manual' });
+            await startPairedClient();
+            return { ...created.status.activeInvite, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, directOffer };
+          }
+          return { ...status.activeInvite, directOffer };
+        }
+        return status.activeInvite;
+      },
       async pairLeave() {
         client?.close(); client = null; directPeer?.close(); directPeer = null; directOffer = null; await hostSignal?.close?.(); await clientSignal?.close?.(); hostSignal = null; clientSignal = null; pendingGrant = null; ready = Promise.resolve(null);
         if (embeddedRelay) { await embeddedRelay.close(); embeddedRelay = null; }
