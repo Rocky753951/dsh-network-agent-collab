@@ -88,7 +88,7 @@ window.__ModuleLoader__.load({
         return () => clearInterval(timer);
       }, [refresh]);
       React.useEffect(() => { const pair = new URLSearchParams(window.location.hash.slice(1)).get('pair'); if (pair) setJoinLink(`${window.location.origin}/#pair=${pair}`); }, []);
-       const run = async (fn) => { setBusy(true); setError(''); try { return await fn(); } catch (err) { setError(err.message); return null; } finally { setBusy(false); } };
+       const run = async (fn) => { setBusy(true); setError(''); try { return await fn(); } catch (err) { const message = err?.message === 'PUBLIC_HOST_RECREATE_REQUIRED' ? 'DSH 已重启，原公网 WebRTC 会话无法恢复；已有协作状态未被修改。请确认后点击“重新生成 Host”。' : err.message; setError(message); return null; } finally { setBusy(false); } };
       const configured = state?.setup?.configured;
       const savedSetup = state?.setup?.setup;
       const paired = Boolean(state?.setup?.group || state?.onboarding?.ready);

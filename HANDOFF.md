@@ -8,9 +8,9 @@ https://github.com/Rocky753951/dsh-network-agent-collab
 
 ## 当前版本
 
-- 版本：0.4.6
+- 版本：0.4.7
 - 最新提交：见仓库 `git log -1`（本交接文档随发布提交同步）
-- 包文件：`dsh-network-agent-collab-0.4.6.tgz`
+- 包文件：`dsh-network-agent-collab-0.4.7.tgz`
 
 ## 已实现
 
@@ -34,7 +34,7 @@ node --check client.js
 npm test
 ```
 
-当前测试为 27/27 通过（以 `npm test` 实际输出为准）。
+当前测试为 28/28 通过（以 `npm test` 实际输出为准）。
 
 ## 公网直连使用边界
 
@@ -43,5 +43,5 @@ Host 生成 Offer；Client 粘贴 Offer 并生成申请包；Host 粘贴 Answer�
 ## 发布包
 
 ```text
-https://github.com/Rocky753951/dsh-network-agent-collab/raw/main/dsh-network-agent-collab-0.4.6.tgz
+https://github.com/Rocky753951/dsh-network-agent-collab/raw/main/dsh-network-agent-collab-0.4.7.tgz
 ```
