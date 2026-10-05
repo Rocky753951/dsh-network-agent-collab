@@ -362,3 +362,101 @@ Danger    仅用于拒绝、退出、删除
 - 保留现有业务逻辑与配对安全校验不变。
 
 仍需在真实 DSH 页面截图验证 token 渲染、侧栏尺寸和移动端实际效果；P1 剩余项包括更深层 Dashboard 分栏、所有表单显式 label，以及 Offer/Answer/Grant 的折叠交互。
+
+## 8. 最新 GitHub 提交复评整改意见
+
+复评提交：`512d7e726af44d97774bb26b31957f1297d39e1b`（`align collaboration UI with design skill`）。本次虽然增加了 `CopyButton`、`CodeBlock`、`ConnectionStatus` 和配对码样式，但仍存在以下发布前问题。
+
+### P0：修复 CSS variant 覆盖
+
+当前先定义 `.nac-button-primary`、`.nac-button-secondary`、`.nac-button-ghost`、`.nac-button-danger`，后面又定义通用 `.nac-button`。后定义的通用规则可能覆盖 variant 的背景色、文字色、边框和圆角，导致：
+
+- secondary 仍显示为品牌色实心按钮；
+- ghost 返回按钮仍显示为实心按钮；
+- danger 的圆角和边框失效；
+- primary 的黑色胶囊效果被 `border-radius: 7px` 覆盖。
+
+建议基础类只定义布局、字号、内边距和光标，把视觉属性放入更高特异性的规则：
+
+```css
+.nac-button { padding: 9px 13px; cursor: pointer; font: inherit; }
+.nac-button.nac-button-primary { background: var(--nac-ink); color: #fff; border-radius: 980px; }
+.nac-button.nac-button-secondary { background: #fff; color: var(--nac-ink); border: 1px solid var(--nac-hairline); border-radius: 980px; }
+.nac-button.nac-button-ghost { background: transparent; color: var(--nac-accent); border: 1px solid transparent; }
+.nac-button.nac-button-danger { background: var(--nac-danger); color: #fff; border-radius: 980px; }
+```
+
+### P0：避免 Apple Token 被基础样式覆盖
+
+前面声明的 `--nac-canvas`、`--nac-ink` 和 Apple 字体栈，后面的 `.nac-page` 又设置了 DSH 背景和 `system-ui` 字体，可能导致 Token 只声明但没有实际渲染效果。
+
+整改要求：
+
+- `.nac-page` 只保留一套最终背景、字体和文字颜色定义；
+- 将 DSH Token 映射到 `--nac-*`，避免后续重复覆盖；
+- 统一使用 `-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`；
+- 必须用真实 DSH 页面截图确认最终颜色、字体和圆角。
+
+### P0：统一返回、退出和流程导航
+
+最新代码仍保留 `.nac-link` 形式的“重新选择网络”和“退出协作组并重新选择网络”，页面中同时存在箭头按钮、文字链接和普通按钮。
+
+统一为：
+
+- `← 返回网络`：Ghost；
+- `← 返回身份`：Ghost；
+- `← 返回上一步`：Ghost；
+- `退出协作`：Danger，并二次确认。
+
+不得继续用 `.nac-link` 表示流程返回。
+
+### P0：步骤条覆盖完整流程
+
+当前步骤条只覆盖网络、身份、确认等前半段页面；创建 Host、邀请 Client、Client 加入、审批 Grant、完成配对页面没有统一步骤条。
+
+建议统一状态映射：
+
+```text
+network → identity → setup → pairing → completed
+```
+
+所有向导页面必须渲染当前步骤，移动端显示“第 X 步，共 5 步”。
+
+### P1：统一 Offer、Answer、Grant 展示
+
+当前 `CodeBlock` 主要用于邀请信息，Offer、Answer、Grant 仍使用普通 textarea，视觉和操作方式不一致。
+
+全部改为代码面板：标题、用途、等宽代码区、复制按钮、inline “已复制”反馈；长内容默认折叠。
+
+### P1：Dashboard 从卡片墙改为主次布局
+
+当前节点、激活、消息、任务仍是相似卡片堆叠，安全审批不够突出。建议改为：
+
+```text
+顶部：连接状态 / 在线节点 / 待审批数量
+主栏：待审批请求 / 最近消息
+辅助栏：节点 / 共享任务 / 连接详情
+```
+
+“待确认激活”应使用最高视觉优先级和明确警示状态。
+
+### P1：表单增加显式标签
+
+Offer、Answer、Grant 和消息输入仍较多依赖 placeholder。增加显式 `<label>`、错误状态、键盘焦点和帮助说明，不能把 placeholder 当作唯一字段名称。
+
+### 最新验收结论
+
+当前版本属于“设计组件已增加，但设计系统尚未完全生效”。在修复 CSS 覆盖、统一返回与退出、补齐完整步骤导航，并完成真实 DSH 页面截图验收前，不应宣称 Apple 极简视觉已完成。
+
+## 9. 本次复评整改
+
+已完成代码整改：
+
+- `.nac-button` 仅保留布局属性；四种变体使用 `.nac-button.nac-button-*` 高特异性规则。
+- `.nac-page` 统一使用 `--nac-*` 背景、颜色和 Apple 字体栈。
+- 流程返回/退出统一使用 `BackButton`；退出使用危险样式。
+- 步骤条统一为“网络 → 身份 → 确认 → 配对 → 完成”，并覆盖 Host、Client、审批和 Dashboard 页面。
+- Offer、申请包、Grant 使用 `CodeBlock`；可编辑信令与表单字段补充显式 label、`aria-label` 和焦点样式。
+- 配对码、邀请信息和审批状态继续保持权限确认及安全校验不变。
+
+已执行 `node --check client.js`、`npm test`（26/26）和 `git diff --check`。真实 DSH 页面截图仍需在运行中的目标 GUI 中进行最终视觉确认。
