@@ -28,6 +28,11 @@ window.__ModuleLoader__.load({
       const [invite, setInvite] = React.useState('');
       const [pairCode, setPairCode] = React.useState('');
       const [publicEndpoint, setPublicEndpoint] = React.useState('');
+      const [directPackage, setDirectPackage] = React.useState('');
+      const [hostDirectOffer, setHostDirectOffer] = React.useState('');
+      const [hostDirectAnswer, setHostDirectAnswer] = React.useState('');
+      const [directGrant, setDirectGrant] = React.useState('');
+      const [clientGrant, setClientGrant] = React.useState('');
       const [hostInfo, setHostInfo] = React.useState(null);
       const [joinStatus, setJoinStatus] = React.useState(null);
       const [duration, setDuration] = React.useState('once');
@@ -60,11 +65,21 @@ window.__ModuleLoader__.load({
         await refresh(); return result;
       });
       const createHost = () => run(async () => {
-        const result = await call('/host/create', publicEndpoint.trim() ? { endpoint: publicEndpoint.trim() } : {}); setHostInfo(result); await refresh(); return result;
+        const result = await call('/host/create', publicEndpoint.trim() ? { endpoint: publicEndpoint.trim() } : {}); setHostInfo(result); if (result.directOffer) setHostDirectOffer(JSON.stringify(result.directOffer, null, 2)); await refresh(); return result;
       });
       const requestJoin = () => run(async () => {
-        const result = await call('/join/request', { invite: invite.trim(), pairCode: pairCode.trim() }); setJoinStatus(result); await refresh(); return result;
+        const result = network === 'public'
+          ? await call('/direct/offer', { offer: JSON.parse(hostDirectOffer || '{}'), invitation: invite.trim(), code: pairCode.trim() })
+          : await call('/join/request', { invite: invite.trim(), pairCode: pairCode.trim() });
+        if (network === 'public') setDirectPackage(JSON.stringify({ answer: result.answer, request: result.request }, null, 2));
+        setJoinStatus(result); await refresh(); return result;
       });
+      const submitDirectAnswer = () => run(async () => {
+        const packet = JSON.parse(directPackage);
+        const result = await call('/direct/answer', { answer: packet.answer, ...packet.request });
+        await refresh(); return result;
+      });
+      const acceptDirectGrant = () => run(async () => { const result = await call('/direct/grant', { grant: JSON.parse(clientGrant) }); await refresh(); return result; });
       const leave = () => run(async () => { await call('/pair/leave', {}); setNetwork(null); setRole(null); setHostInfo(null); setJoinStatus(null); await refresh(); });
       const peers = Object.values(state?.peers || {});
       const tasks = Object.values(state?.tasks || {});
@@ -73,7 +88,9 @@ window.__ModuleLoader__.load({
       const activeInvite = hostInfo || state?.setup?.activeInvite;
       const pendingJoinRequests = state?.setup?.pendingRequests || [];
       const decideJoin = (requestId, decision) => run(async () => {
-        await call('/join/decide', { requestId, decision, duration, permissionLevel }); await refresh();
+        const result = await call('/join/decide', { requestId, decision, duration, permissionLevel });
+        if (result.directGrant) setDirectGrant(JSON.stringify(result.directGrant, null, 2));
+        await refresh(); return result;
       });
       const approvalFields = e('div', { className: 'nac-approval-fields' },
         e('label', null, '权限时间', e('select', { value: duration, onChange: (event) => setDuration(event.target.value) },
@@ -88,9 +105,9 @@ window.__ModuleLoader__.load({
         return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '确认设置')), e(Card, { title: role === 'host' ? '创建 Host' : '加入 Client' }, e('p', null, `${network === 'lan' ? (transport === 'tailscale' ? 'Tailscale 局域网' : '物理局域网') : '公网 P2P'} · ${role === 'host' ? 'Host' : 'Client'}`), e(Button, { disabled: busy, onClick: saveSetup }, '继续'), e('button', { className: 'nac-link', onClick: () => setRole(null) }, '返回身份选择')));
       }
 
-      if (savedSetup?.role === 'host' && !state?.setup?.group) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '创建协作组')), e(Card, { title: '启动本机 Host' }, e('p', null, '插件会启动内置 Relay 并生成一次性邀请。'), network === 'public' && e('input', { placeholder: 'Host 公网地址，例如 ws://203.0.113.10:端口（无需第三方 Relay）', value: publicEndpoint, onChange: (event) => setPublicEndpoint(event.target.value) }), e(Button, { disabled: busy, onClick: createHost }, '启动 Host 并生成配对码')), e('button', { className: 'nac-link', onClick: leave }, '重新选择网络'));
-      if (savedSetup?.role === 'host' && activeInvite && (!paired || peers.length === 0)) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '邀请 Client 加入')), e(Card, { title: '一次性配对信息' }, e('p', null, `六位配对码：${activeInvite.pairingCode}`), e('textarea', { readOnly: true, value: activeInvite.invitation || '', 'aria-label': '邀请信息' }), e('small', null, `有效至：${time(activeInvite.expiresAt)}`), e('p', null, '请把邀请信息和配对码发送给 Client。Client 申请后将在此审批。'), e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: createHost }, '重新生成配对码'), e(Button, { disabled: busy, onClick: refresh }, '刷新状态'))), pendingJoinRequests.length > 0 && e(Card, { title: '待审批加入申请' }, pendingJoinRequests.map((req) => e('div', { key: req.id, className: 'nac-request' }, e('div', null, e('strong', null, req.clientName || req.clientId), e('small', null, req.clientId)), approvalFields, e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'approved') }, '同意加入'), e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'rejected') }, '拒绝'))))), e('button', { className: 'nac-link', onClick: leave }, '退出协作组并重新选择网络'));
-      if (savedSetup?.role === 'client' && !paired) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '加入协作组')), e(Card, { title: '粘贴 Host 邀请信息' }, e('textarea', { placeholder: '粘贴 Host 提供的邀请信息', value: invite, onChange: (event) => setInvite(event.target.value) }), e('input', { inputMode: 'numeric', maxLength: 6, placeholder: '六位配对码', value: pairCode, onChange: (event) => setPairCode(event.target.value.replace(/\D/g, '').slice(0, 6)) }), e(Button, { disabled: busy || !invite.trim() || pairCode.length !== 6, onClick: requestJoin }, '申请加入'), joinStatus && e('p', null, '申请已发送，等待 Host 审批确认后自动接入。')), e('button', { className: 'nac-link', onClick: leave }, '重新选择网络'));
+      if (savedSetup?.role === 'host' && !state?.setup?.group) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '创建协作组')), e(Card, { title: '启动本机 Host' }, e('p', null, network === 'public' ? 'Host 将生成 WebRTC Offer；请与 Client 手动交换信令。' : '插件会启动内置 Relay 并生成一次性邀请。'), network === 'public' && e('textarea', { placeholder: 'Host Offer（创建后复制给 Client）', value: hostDirectOffer, onChange: (event) => setHostDirectOffer(event.target.value) }), network === 'public' && e('textarea', { placeholder: '粘贴 Client Answer + 请求包 JSON', value: hostDirectAnswer, onChange: (event) => setHostDirectAnswer(event.target.value) }), network === 'public' && hostDirectAnswer && e(Button, { disabled: busy, onClick: () => run(async () => { const packet = JSON.parse(hostDirectAnswer); await call('/direct/answer', { answer: packet.answer, ...packet.request }); await refresh(); }) }, '提交 Client Answer'), network === 'public' && e('input', { placeholder: '公网地址（无需填写；手动 WebRTC 信令）', value: publicEndpoint, onChange: (event) => setPublicEndpoint(event.target.value) }), e(Button, { disabled: busy, onClick: createHost }, '启动 Host 并生成配对码')), e('button', { className: 'nac-link', onClick: leave }, '重新选择网络'));
+      if (savedSetup?.role === 'host' && activeInvite && (!paired || peers.length === 0)) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '邀请 Client 加入')), e(Card, { title: '一次性配对信息' }, e('p', null, `六位配对码：${activeInvite.pairingCode}`), e('textarea', { readOnly: true, value: activeInvite.invitation || '', 'aria-label': '邀请信息' }), e('small', null, `有效至：${time(activeInvite.expiresAt)}`), e('p', null, '请把邀请信息和配对码发送给 Client。Client 申请后将在此审批。'), e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: createHost }, '重新生成配对码'), e(Button, { disabled: busy, onClick: refresh }, '刷新状态'))), directGrant && e(Card, { title: '发送审批 Grant' }, e('textarea', { readOnly: true, value: directGrant, 'aria-label': 'Grant JSON' })), pendingJoinRequests.length > 0 && e(Card, { title: '待审批加入申请' }, pendingJoinRequests.map((req) => e('div', { key: req.id, className: 'nac-request' }, e('div', null, e('strong', null, req.clientName || req.clientId), e('small', null, req.clientId)), approvalFields, e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'approved') }, '同意加入'), e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'rejected') }, '拒绝'))))), e('button', { className: 'nac-link', onClick: leave }, '退出协作组并重新选择网络'));
+      if (savedSetup?.role === 'client' && !paired) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '加入协作组')), e(Card, { title: '粘贴 Host 邀请信息' }, e('textarea', { placeholder: '粘贴 Host 提供的邀请信息', value: invite, onChange: (event) => setInvite(event.target.value) }), network === 'public' && e('textarea', { placeholder: '粘贴 Host Offer JSON', value: hostDirectOffer, onChange: (event) => setHostDirectOffer(event.target.value) }), e('input', { inputMode: 'numeric', maxLength: 6, placeholder: '六位配对码', value: pairCode, onChange: (event) => setPairCode(event.target.value.replace(/\D/g, '').slice(0, 6)) }), e(Button, { disabled: busy || !invite.trim() || pairCode.length !== 6 || (network === 'public' && !hostDirectOffer.trim()), onClick: requestJoin }, network === 'public' ? '生成申请包' : '申请加入'), network === 'public' && directPackage && e('textarea', { readOnly: true, value: directPackage, 'aria-label': '发送给 Host 的申请包' }), network === 'public' && e('textarea', { placeholder: '粘贴 Host 审批后的 Grant JSON', value: clientGrant, onChange: (event) => setClientGrant(event.target.value) }), network === 'public' && clientGrant && e(Button, { disabled: busy, onClick: acceptDirectGrant }, '确认 Grant 并接入'), joinStatus && e('p', null, '申请包已生成；请发送给 Host，审批后粘贴 Grant。')), e('button', { className: 'nac-link', onClick: leave }, '重新选择网络'));
 
       return e('main', { className: 'nac-page' },
         e('header', { className: 'nac-header' },
