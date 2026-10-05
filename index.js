@@ -1,6 +1,6 @@
 import { homedir, hostname, networkInterfaces } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FederationClient, JsonStore, dataPath } from './src/core.js';
 import { SetupState } from './src/setup-state.js';
@@ -14,15 +14,28 @@ import { createUiHandler } from './src/ui-server.js';
 const asText = (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }];
 const jsonOutput = { schema: {}, render: asText };
 
-function ensureLocalSharedSecret(stateDir) {
+export function ensureLocalSharedSecret(stateDir) {
   const path = join(stateDir, 'shared-secret');
+  let existing = false;
   try {
+    const stat = lstatSync(path);
+    existing = true;
+    if (!stat.isFile()) throw new Error('network-agent-collab shared-secret must be a regular file');
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) {
+      throw new Error('network-agent-collab shared-secret must be owned by the current user');
+    }
     const value = readFileSync(path, 'utf8').trim();
-    if (Buffer.byteLength(value) >= 32) return value;
-  } catch {}
+    if (Buffer.byteLength(value) >= 32) {
+      chmodSync(path, 0o600);
+      return value;
+    }
+  } catch (error) {
+    if (existing || error?.code !== 'ENOENT') throw error;
+  }
   const value = randomBytes(32).toString('base64url');
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(path, value, { mode: 0o600 });
+  chmodSync(path, 0o600);
   return value;
 }
 

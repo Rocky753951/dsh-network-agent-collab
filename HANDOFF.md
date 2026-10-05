@@ -34,7 +34,7 @@ node --check client.js
 npm test
 ```
 
-当前测试为 26/26 通过（以 `npm test` 实际输出为准）。
+当前测试为 27/27 通过（以 `npm test` 实际输出为准）。
 
 ## 公网直连使用边界
 

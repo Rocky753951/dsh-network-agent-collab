@@ -15,7 +15,7 @@
 
 > 激活不跨网络传递 DSH Session 或凭据：发送端只投递签名请求，**目标主机**基于自己的 provider/model 配置创建本地会话。
 
-每个帧以共享密钥进行 HMAC-SHA-256 签名；LAN 模式拒绝启动，除非配置非默认、至少 32 字节的密钥和稳定唯一的 `agentId`。客户端拒绝签名错误、超过 ±5 分钟时钟偏差、超过 64 KiB 或重复的帧。Relay 不保存任务、消息或密钥，只按房间转发；Relay 未连接时写操作返回 `RELAY_UNAVAILABLE`，不会谎报已送达。
+每个帧以共享密钥进行 HMAC-SHA-256 签名；LAN 模式省略 `sharedSecret` 时，会在 profile 数据目录自动生成并持久化一个至少 32 字节的本机密钥（文件权限收紧为 `0600`）；只有显式提供过短、默认占位符或无效密钥时才拒绝启动。客户端拒绝签名错误、超过 ±5 分钟时钟偏差、超过 64 KiB 或重复的帧。Relay 不保存任务、消息或密钥，只按房间转发；Relay 未连接时写操作返回 `RELAY_UNAVAILABLE`，不会谎报已送达。
 
 ### 分级审批
 
@@ -66,7 +66,7 @@ dsh plugin --profile web add ./
 
 Host 会在页面实时显示 Client 申请，可选择：单次/24 小时/永久，以及仅通信/可唤醒 Agent（需审批）/无条件信任。每个 Agent 只允许匹配一次。配对密钥只在 Host 批准后通过信令发送，状态和日志不会展示密钥。
 
-公网 P2P 不使用第三方 Relay：Host 自己启动内置直连服务，Client 直接连接 Host。Host 需要在路由器上做端口转发，并把自己的公网地址（例如 `ws://公网IP:端口`；有 TLS 时可用 `wss://`）放进邀请信息。若双方都在严格 NAT 后且无法端口转发，则免费直连在网络层面不可实现，此时应使用局域网或 Tailscale。
+公网 P2P 不使用第三方 Relay，也不启动公网 WebSocket mailbox。实际流程完全依赖手工复制信令包：Host 生成 Offer 和邀请信息；Client 粘贴后生成 Answer 与加入申请包；Host 粘贴 Answer/申请包并审批后生成 Grant；Client 粘贴 Grant，双方再由 WebRTC DataChannel 直连。STUN 仅用于 IPv4 ICE 候选发现，不是中继服务。若双方都在严格 NAT、CGNAT 或 UDP 被封锁环境，直连会失败，此时应使用局域网或 Tailscale。
 ## 启动局域网 Relay
 
 在局域网中一台可访问的机器上：

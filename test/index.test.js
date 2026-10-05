@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { createEnvelope } from '../src/core.js';
-import { apply } from '../index.js';
+import { apply, ensureLocalSharedSecret } from '../index.js';
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -68,6 +71,20 @@ test('plugin starts LAN setup without manual secrets and rejects invalid explici
       () => apply(ctx, { mode: 'lan', sharedSecret }),
       /LAN mode sharedSecret must be at least 32 bytes when provided/,
     );
+  }
+});
+
+test('generated LAN secret permissions are repaired on reuse', () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'dsh-network-agent-collab-secret-'));
+  try {
+    ensureLocalSharedSecret(stateDir);
+    const secretPath = join(stateDir, 'shared-secret');
+    assert.ok(Buffer.byteLength(readFileSync(secretPath, 'utf8').trim()) >= 32);
+    chmodSync(secretPath, 0o644);
+    ensureLocalSharedSecret(stateDir);
+    assert.equal(statSync(secretPath).mode & 0o777, 0o600);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
   }
 });
 
