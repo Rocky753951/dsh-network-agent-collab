@@ -460,3 +460,14 @@ Offer、Answer、Grant 和消息输入仍较多依赖 placeholder。增加显式
 - 配对码、邀请信息和审批状态继续保持权限确认及安全校验不变。
 
 已执行 `node --check client.js`、`npm test`（26/26）和 `git diff --check`。真实 DSH 页面截图仍需在运行中的目标 GUI 中进行最终视觉确认。
+
+## 10. 后续验收整改补充
+
+针对 P1 反馈继续完成：
+
+- 长 Offer/Answer/Grant 默认折叠，保留标题、用途、等宽内容区、复制按钮和展开入口。
+- Dashboard 增加主栏/辅助栏语义布局；“待确认激活”使用最高优先级红色边界和提示阴影。
+- 移动端在 720px 以下自动切换为单栏，避免按钮与卡片溢出。
+- 所有新增信令输入保持显式 label、`aria-label`、键盘焦点样式。
+
+本轮重新执行 `node --check client.js`、`npm test`（26/26）和 `git diff --check`；未改变配对认证、审批和权限逻辑。
