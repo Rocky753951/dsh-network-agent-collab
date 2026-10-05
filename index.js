@@ -184,8 +184,9 @@ export function apply(ctx, config = {}) {
           ? String(tailscale?.self?.dnsName || tailscale?.self?.addresses?.[0] || '').replace(/\.+$/, '')
           : localAddress();
         if (transport === 'tailscale' && !advertisedHost) throw new Error('TAILSCALE_NOT_READY');
-        // No service is used for public NAT traversal: a reachable WSS endpoint is required.
-        if (transport === 'public' && !(typeof args.endpoint === 'string' && args.endpoint.startsWith('wss://'))) throw new Error('PUBLIC_WSS_ENDPOINT_REQUIRED');
+        // Public mode is zero-cost direct Host mode: the embedded socket server runs on
+        // the Host itself. The user may advertise a public ws:// or wss:// address;
+        // no third-party relay or NAT traversal service is required.
         const endpoint = typeof args.endpoint === 'string' && args.endpoint ? args.endpoint : `ws://${advertisedHost}:${embeddedRelay.port}`;
         const created = await setupState.createHost({ transport, endpoint });
         await startPairedClient();
