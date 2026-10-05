@@ -44,6 +44,8 @@ export function apply(ctx, config = {}) {
   if (!['lan', 'public'].includes(networkScope)) throw new Error('network-agent-collab networkScope must be lan or public');
   if (networkScope === 'lan' && !['local', 'tailscale'].includes(lanTransport)) throw new Error('network-agent-collab lanTransport must be local or tailscale');
   if (networkScope === 'public' && !['host', 'client'].includes(publicRole)) throw new Error('network-agent-collab publicRole must be host or client');
+  const secretValid = typeof config.sharedSecret === 'string' && config.sharedSecret !== 'CHANGE_ME' && Buffer.byteLength(config.sharedSecret) >= 32;
+  if (mode === 'lan' && !secretValid) throw new Error('network-agent-collab LAN mode requires sharedSecret of at least 32 bytes');
   const roomId = config.roomId || 'default';
   const stateDir = config.dataDir || join(homedir(), '.dsh', 'network-agent-collab');
   const setupState = new SetupState({
@@ -62,7 +64,6 @@ export function apply(ctx, config = {}) {
   const agentId = configuredAgentId && !configuredAgentId.startsWith('CHANGE_ME')
     ? configuredAgentId
     : `dsh-${hostname().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || 'node'}`;
-  const secretValid = typeof config.sharedSecret === 'string' && config.sharedSecret !== 'CHANGE_ME' && Buffer.byteLength(config.sharedSecret) >= 32;
   const identity = { id: agentId, name: config.agentName || `dsh-${agentId.slice(0, 8)}`, capabilities: config.capabilities || ['chat', 'tasks', 'activation'], networkScope, lanTransport, publicRole };
   let client = null;
   let ready = Promise.resolve(null);

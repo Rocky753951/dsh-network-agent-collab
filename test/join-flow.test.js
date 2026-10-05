@@ -32,6 +32,22 @@ test('client receives room material only after host approval and client confirma
   await assert.rejects(() => host.receiveJoinRequest({ request: prepared.request, now: 1_000_004 }), /PAIRING_INVITE_ALREADY_USED/);
 });
 
+test('client rejects forged or tampered host grants', async () => {
+  const host = await state('Host'); const client = await state('Client');
+  await host.configure({ network: 'lan', lanTransport: 'local', role: 'host' });
+  const created = await host.createHost({ transport: 'local', endpoint: 'ws://host.local:8787', now: 2_000_000, ttlMs: 60_000 });
+  await client.configure({ network: 'lan', lanTransport: 'local', role: 'client' });
+  const prepared = await client.requestJoin({ invitation: encodePairingInvite(created.invite), code: created.pairingCode, now: 2_000_001 });
+  await host.receiveJoinRequest({ request: prepared.request, now: 2_000_002 });
+  const approved = await host.decideJoin({ requestId: prepared.request.id, decision: 'approved', now: 2_000_003 });
+  for (const field of ['hostId', 'roomId', 'secret', 'endpoint']) {
+    const forged = { ...approved.grant, [field]: field === 'secret' ? 'A'.repeat(43) : `forged-${field}` };
+    await assert.rejects(() => client.acceptJoinGrant({ grant: forged }), /PAIRING_GRANT_INVALID/);
+  }
+  // An attacker who knows every invitation field still cannot produce an Ed25519 signature.
+  await assert.rejects(() => client.acceptJoinGrant({ grant: { ...approved.grant, signature: Buffer.alloc(64, 7).toString('base64url') } }), /PAIRING_GRANT_INVALID/);
+});
+
 test('expired and rejected pairing requests cannot deliver grants', async () => {
   const host = await state('Host'); const client = await state('Client');
   await host.configure({ network: 'lan', role: 'host' });

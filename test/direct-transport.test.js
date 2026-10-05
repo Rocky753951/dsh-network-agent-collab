@@ -67,6 +67,10 @@ test('DirectPeer validates signal direction and rejects malformed offers/answers
   assert.throws(() => client.acceptOffer({ type: 'answer', sdp: 'answer' }), /DIRECT_SIGNAL_INVALID/);
   assert.throws(() => client.acceptOffer({ type: 'offer', sdp: '' }), /DIRECT_SIGNAL_INVALID/);
   assert.throws(() => client.acceptOffer({ type: 'offer', sdp: 'offer', candidates: [{ candidate: 7 }] }), /DIRECT_SIGNAL_INVALID/);
+  for (const candidate of ['', '   ', 'not-an-ice-candidate']) {
+    assert.throws(() => client.acceptOffer({ type: 'offer', sdp: 'offer', candidates: [{ candidate }] }), /DIRECT_SIGNAL_INVALID/);
+  }
+  assert.throws(() => client.acceptOffer({ type: 'offer', sdp: 'offer', candidates: [{ candidate: 'candidate:1 1 UDP 1 192.0.2.1 3478 typ host', mid: '   ' }] }), /DIRECT_SIGNAL_INVALID/);
 
   const host = new DirectPeer({ role: 'host', PeerConnectionImpl: FakePeerConnection });
   const offer = await host.createOffer();

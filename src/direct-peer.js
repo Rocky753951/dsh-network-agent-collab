@@ -12,6 +12,10 @@ export const DEFAULT_STUN_SERVERS = Object.freeze([
 const MAX_SIGNAL_BYTES = 64 * 1024;
 const DESCRIPTION_TIMEOUT_MS = 15_000;
 
+function validIceCandidate(candidate) {
+  return typeof candidate === 'string' && /^candidate:\S+/.test(candidate.trim());
+}
+
 function localDescription(pc, transform) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('DIRECT_DESCRIPTION_TIMEOUT')), DESCRIPTION_TIMEOUT_MS);
@@ -26,7 +30,7 @@ function validateSignal(signal, expectedType) {
   if (!signal || typeof signal !== 'object' || signal.type !== expectedType || typeof signal.sdp !== 'string' || !signal.sdp.trim() || signal.sdp.length > MAX_SIGNAL_BYTES) {
     throw new Error('DIRECT_SIGNAL_INVALID');
   }
-  if (signal.candidates !== undefined && (!Array.isArray(signal.candidates) || signal.candidates.some((item) => !item || typeof item !== 'object' || typeof item.candidate !== 'string' || (item.mid !== undefined && typeof item.mid !== 'string')))) {
+  if (signal.candidates !== undefined && (!Array.isArray(signal.candidates) || signal.candidates.some((item) => !item || typeof item !== 'object' || !validIceCandidate(item.candidate) || (item.mid !== undefined && (typeof item.mid !== 'string' || !item.mid.trim()))))) {
     throw new Error('DIRECT_SIGNAL_INVALID');
   }
   return signal;
@@ -51,7 +55,7 @@ export class DirectPeer {
     this.pc = new PeerConnectionImpl(name, { iceServers, iceTransportPolicy: 'all' });
     this.channel = null;
     this.localCandidates = [];
-    this.pc.onLocalCandidate((candidate, mid) => { this.localCandidates.push({ candidate, mid }); });
+    this.pc.onLocalCandidate((candidate, mid) => { if (validIceCandidate(candidate)) this.localCandidates.push({ candidate, mid }); });
     this.pc.onStateChange((state) => this.onState?.(state));
     this.pc.onDataChannel((channel) => this.bindChannel(channel));
   }

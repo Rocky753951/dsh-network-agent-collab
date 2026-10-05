@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { createPairingInvite, decodePairingInvite, encodePairingInvite, loadOrCreateLocalIdentity, verifyPairingCode } from './onboarding.js';
+import { createPairingInvite, decodePairingInvite, encodePairingInvite, loadOrCreateLocalIdentity, verifyPairingCode, signPairingGrant, verifyPairingGrant } from './onboarding.js';
 
 const VERSION = 1;
 const NETWORKS = new Set(['lan', 'public']);
@@ -157,14 +157,17 @@ export class SetupState {
     this.state.usedInviteIds.push(invite.id);
     const expiresAt = grantExpiry(duration, now);
     this.state.members[request.clientId] = { id: request.clientId, name: request.clientName, approvedAt: now, duration, permissionLevel, expiresAt };
+    const grant = { requestId, hostId: this.identity.id, hostName: this.identity.name, endpoint: this.state.group.endpoint, roomId: this.state.group.id, secret: this.state.group.secret, approvedAt: now, duration, permissionLevel, expiresAt };
+    grant.signature = signPairingGrant(grant, this.identity);
     await this.persist();
-    return { decision, requestId, grant: { requestId, hostId: this.identity.id, hostName: this.identity.name, endpoint: this.state.group.endpoint, roomId: this.state.group.id, secret: this.state.group.secret, approvedAt: now, duration, permissionLevel, expiresAt } };
+    return { decision, requestId, grant };
   }
 
   /** Client explicitly confirms and stores a Host-issued approved grant. */
   async acceptJoinGrant({ grant } = {}) {
-    if (this.state?.setup?.role !== 'client' || !this.state.pendingJoin) throw new Error('PAIRING_CLIENT_CONFIRMATION_REQUIRED');
-    if (!grant || grant.requestId !== this.state.pendingJoin.id || typeof grant.roomId !== 'string' || typeof grant.secret !== 'string' || Buffer.from(grant.secret, 'base64url').length < 32 || typeof grant.endpoint !== 'string') throw new Error('PAIRING_GRANT_INVALID');
+    const pending = this.state?.pendingJoin;
+    if (this.state?.setup?.role !== 'client' || !pending) throw new Error('PAIRING_CLIENT_CONFIRMATION_REQUIRED');
+    if (!grant || grant.requestId !== pending.id || grant.hostId !== pending.invite.hostId || grant.endpoint !== pending.invite.endpoint || typeof grant.roomId !== 'string' || typeof grant.secret !== 'string' || Buffer.from(grant.secret, 'base64url').length < 32 || typeof grant.endpoint !== 'string' || !verifyPairingGrant(grant, pending.invite)) throw new Error('PAIRING_GRANT_INVALID');
     this.state.group = { id: grant.roomId, name: grant.hostName || grant.hostId, transport: this.state.setup.network === 'lan' ? this.state.setup.lanTransport : 'public', endpoint: grant.endpoint, secret: grant.secret, createdAt: grant.approvedAt || Date.now(), joinedAt: Date.now(), hostId: grant.hostId };
     this.state.pendingJoin = null;
     await this.persist();
