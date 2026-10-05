@@ -62,9 +62,9 @@ dsh plugin --profile web add ./
 
 1. 选择“局域网”或“公网 P2P”；
 2. 选择 Host 或 Client（局域网还可选择物理网/Tailscale）；
-3. Host 启动后生成 Host 邀请和六位匹配码，Client 粘贴两者申请加入。
+3. Host 启动后生成加密连接链接和六位匹配码，Client 粘贴链接并输入匹配码申请加入。
 
-Host 会在页面实时显示 Client 申请，可选择：单次/24 小时/永久，以及仅通信/可唤醒 Agent（需审批）/无条件信任。每个 Agent 只允许匹配一次。配对密钥只在 Host 批准后通过信令发送，状态和日志不会展示密钥。
+Host 会在页面实时显示 Client 申请，可选择：单次/24 小时/永久，以及仅通信/可唤醒 Agent（需审批）/无条件信任。每个 Agent 只允许匹配一次。连接链接使用 PBKDF2-SHA-256 + AES-256-GCM 封装邀请和公网 Offer；六位匹配码不写入链接。配对密钥只在 Host 批准后通过信令发送，状态和日志不会展示密钥。
 
 公网 P2P 不使用第三方 Relay，也不启动公网 WebSocket mailbox。实际流程完全依赖手工复制信令包：Host 生成 Offer 和邀请信息；Client 粘贴后生成 Answer 与加入申请包；Host 粘贴 Answer/申请包并审批后生成 Grant；Client 粘贴 Grant，双方再由 WebRTC DataChannel 直连。STUN 仅用于 IPv4 ICE 候选发现，不是中继服务。若双方都在严格 NAT、CGNAT 或 UDP 被封锁环境，直连会失败，此时应使用局域网或 Tailscale。
 ## 启动局域网 Relay
