@@ -60,6 +60,8 @@ window.__ModuleLoader__.load({
         'setup-required': '请选择网络与本机身份。',
         'waiting-for-host': '尚未创建或加入协作组。',
         'relay-connecting': '正在连接本机 Relay。',
+        'public-waiting-for-signal': '等待手工交换 Offer、Answer 和 Grant；公网模式不使用 Relay。',
+        'public-waiting-for-peer': '直连信令已交换，正在等待对方建立 DataChannel。',
         'waiting-for-peer': '协作组已启动，正在等待其他设备加入。',
         matched: '节点已匹配，可以开始协作。',
         'tailscale-unavailable': '未检测到可用的 Tailscale 登录。',

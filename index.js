@@ -121,12 +121,14 @@ export function apply(ctx, config = {}) {
     return client;
   };
   const startHostSignal = async (invite) => {
+    if (!invite || invite.endpoint === 'direct://manual') return;
     await hostSignal?.close?.();
     hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, onRequest: async (request) => {
       await setupState.receiveJoinRequest({ request });
     }});
   };
   const startClientSignal = async (request, invite) => {
+    if (!invite || invite.endpoint === 'direct://manual') return;
     await clientSignal?.close?.();
     clientSignal = await startClientPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, request, onGrant: async (grant) => {
       pendingGrant = grant;
@@ -286,7 +288,7 @@ export function apply(ctx, config = {}) {
         const needsTailscale = currentNetworkScope === 'lan' && currentLanTransport === 'tailscale';
         const networkReady = !needsTailscale || Boolean(tailscale.configured && tailscale.self?.online);
         return { ...federation, identity: currentIdentity, setup: localSetup, tailscale, onboarding: {
-          stage: !networkReady ? (!tailscale.configured ? 'tailscale-unavailable' : 'tailscale-offline') : !federation.transportReady ? 'relay-connecting' : matchedPeers.length ? 'matched' : 'waiting-for-peer',
+          stage: !networkReady ? (!tailscale.configured ? 'tailscale-unavailable' : 'tailscale-offline') : currentNetworkScope === 'public' ? (!federation.transportReady ? 'public-waiting-for-signal' : matchedPeers.length ? 'matched' : 'public-waiting-for-peer') : !federation.transportReady ? 'relay-connecting' : matchedPeers.length ? 'matched' : 'waiting-for-peer',
           ready: Boolean(networkReady && federation.transportReady && matchedPeers.length),
           matchedPeers: matchedPeers.length,
         } };

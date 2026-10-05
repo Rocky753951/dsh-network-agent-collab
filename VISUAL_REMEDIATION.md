@@ -471,3 +471,9 @@ Offer、Answer、Grant 和消息输入仍较多依赖 placeholder。增加显式
 - 所有新增信令输入保持显式 label、`aria-label`、键盘焦点样式。
 
 本轮重新执行 `node --check client.js`、`npm test`（26/26）和 `git diff --check`；未改变配对认证、审批和权限逻辑。
+
+## 11. 独立验收报告复核
+
+针对 `ACCEPTANCE_REMEDIATION.md` 记录的公网手工信令 Blocker，复核当前实现确认 `directOffer()` 仅执行 `acceptOffer()` 与本地 `requestJoin()`，不会调用 WebSocket mailbox；`startHostSignal()` 与 `startClientSignal()` 也会跳过 `direct://manual`。公网状态文案已与 LAN Relay 分离，`HANDOFF.md` 测试数字已同步为 26/26。
+
+跨设备公网 IPv4、NAT、Tailscale 和真实 DSH GUI 截图仍未在本环境验证，因此不宣称这些外部验收已完成。
