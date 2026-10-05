@@ -56,3 +56,7 @@ test('inbound approved activation creates a local agent and submits its prompt',
     dispose?.(); globalThis.WebSocket = originalWebSocket;
   }
 });
+
+test('plugin refuses to start without an Agent loop', () => {
+  assert.throws(() => apply({ tools: { register() {} }, effect() {} }), /NETWORK_AGENT_COLLAB_REQUIRES_AGENT/);
+});

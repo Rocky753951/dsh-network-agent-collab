@@ -27,14 +27,21 @@ window.__ModuleLoader__.load({
       const [role, setRole] = React.useState(null);
       const [invite, setInvite] = React.useState('');
       const [pairCode, setPairCode] = React.useState('');
+      const [publicEndpoint, setPublicEndpoint] = React.useState('');
       const [hostInfo, setHostInfo] = React.useState(null);
       const [joinStatus, setJoinStatus] = React.useState(null);
+      const [duration, setDuration] = React.useState('once');
+      const [permissionLevel, setPermissionLevel] = React.useState('communication');
       const [message, setMessage] = React.useState({ to: '', text: '', topic: '' });
       const [task, setTask] = React.useState({ id: '', title: '', detail: '', assignee: '' });
       const refresh = React.useCallback(async () => {
         try { setState(await call('/snapshot')); } catch (err) { setError(`无法读取协作状态：${err.message}`); }
       }, []);
-      React.useEffect(() => { refresh(); }, [refresh]);
+      React.useEffect(() => {
+        refresh();
+        const timer = setInterval(refresh, 2000);
+        return () => clearInterval(timer);
+      }, [refresh]);
       const run = async (fn) => { setBusy(true); setError(''); try { return await fn(); } catch (err) { setError(err.message); return null; } finally { setBusy(false); } };
       const configured = state?.setup?.configured;
       const savedSetup = state?.setup?.setup;
@@ -53,7 +60,7 @@ window.__ModuleLoader__.load({
         await refresh(); return result;
       });
       const createHost = () => run(async () => {
-        const result = await call('/host/create', {}); setHostInfo(result); await refresh(); return result;
+        const result = await call('/host/create', publicEndpoint.trim() ? { endpoint: publicEndpoint.trim() } : {}); setHostInfo(result); await refresh(); return result;
       });
       const requestJoin = () => run(async () => {
         const result = await call('/join/request', { invite: invite.trim(), pairCode: pairCode.trim() }); setJoinStatus(result); await refresh(); return result;
@@ -66,8 +73,14 @@ window.__ModuleLoader__.load({
       const activeInvite = hostInfo || state?.setup?.activeInvite;
       const pendingJoinRequests = state?.setup?.pendingRequests || [];
       const decideJoin = (requestId, decision) => run(async () => {
-        await call('/join/decide', { requestId, decision }); await refresh();
+        await call('/join/decide', { requestId, decision, duration, permissionLevel }); await refresh();
       });
+      const approvalFields = e('div', { className: 'nac-approval-fields' },
+        e('label', null, '权限时间', e('select', { value: duration, onChange: (event) => setDuration(event.target.value) },
+          e('option', { value: 'once' }, '单次'), e('option', { value: '24h' }, '24 小时'), e('option', { value: 'permanent' }, '永久'))),
+        e('label', null, '权限等级', e('select', { value: permissionLevel, onChange: (event) => setPermissionLevel(event.target.value) },
+          e('option', { value: 'communication' }, '仅通信'), e('option', { value: 'wake-approval' }, '可唤醒 Agent（需审批）'), e('option', { value: 'trusted' }, '无条件信任')))
+      );
 
       if (!configured) {
         if (!network) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('div', null, e('h1', null, 'Agent 协作中心'), e('p', null, '选择本次协作使用的网络。'))), e(Card, { title: '选择网络' }, e('p', null, '此选择独立于后续协作页面。'), e('div', { className: 'nac-choice-row' }, e(Button, { onClick: () => setNetwork('lan') }, '局域网'), e(Button, { onClick: () => setNetwork('public') }, '公网 P2P'))));
@@ -75,8 +88,8 @@ window.__ModuleLoader__.load({
         return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '确认设置')), e(Card, { title: role === 'host' ? '创建 Host' : '加入 Client' }, e('p', null, `${network === 'lan' ? (transport === 'tailscale' ? 'Tailscale 局域网' : '物理局域网') : '公网 P2P'} · ${role === 'host' ? 'Host' : 'Client'}`), e(Button, { disabled: busy, onClick: saveSetup }, '继续'), e('button', { className: 'nac-link', onClick: () => setRole(null) }, '返回身份选择')));
       }
 
-      if (savedSetup?.role === 'host' && !state?.setup?.group) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '创建协作组')), e(Card, { title: '启动本机 Host' }, e('p', null, '插件会启动内置 Relay 并生成一次性邀请。'), e(Button, { disabled: busy, onClick: createHost }, '启动 Host 并生成配对码')), e('button', { className: 'nac-link', onClick: leave }, '重新选择网络'));
-      if (savedSetup?.role === 'host' && activeInvite && (!paired || peers.length === 0)) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '邀请 Client 加入')), e(Card, { title: '一次性配对信息' }, e('p', null, `六位配对码：${activeInvite.pairingCode}`), e('textarea', { readOnly: true, value: activeInvite.invitation || '', 'aria-label': '邀请信息' }), e('small', null, `有效至：${time(activeInvite.expiresAt)}`), e('p', null, '请把邀请信息和配对码发送给 Client。Client 申请后将在此审批。'), e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: createHost }, '重新生成配对码'), e(Button, { disabled: busy, onClick: refresh }, '刷新状态'))), pendingJoinRequests.length > 0 && e(Card, { title: '待审批加入申请' }, pendingJoinRequests.map((req) => e('div', { key: req.id, className: 'nac-request' }, e('div', null, e('strong', null, req.clientName || req.clientId), e('small', null, req.clientId)), e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'approved') }, '同意加入'), e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'rejected') }, '拒绝'))))), e('button', { className: 'nac-link', onClick: leave }, '退出协作组并重新选择网络'));
+      if (savedSetup?.role === 'host' && !state?.setup?.group) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '创建协作组')), e(Card, { title: '启动本机 Host' }, e('p', null, '插件会启动内置 Relay 并生成一次性邀请。'), network === 'public' && e('input', { placeholder: '可公网访问的 wss:// Relay 地址', value: publicEndpoint, onChange: (event) => setPublicEndpoint(event.target.value) }), e(Button, { disabled: busy, onClick: createHost }, '启动 Host 并生成配对码')), e('button', { className: 'nac-link', onClick: leave }, '重新选择网络'));
+      if (savedSetup?.role === 'host' && activeInvite && (!paired || peers.length === 0)) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '邀请 Client 加入')), e(Card, { title: '一次性配对信息' }, e('p', null, `六位配对码：${activeInvite.pairingCode}`), e('textarea', { readOnly: true, value: activeInvite.invitation || '', 'aria-label': '邀请信息' }), e('small', null, `有效至：${time(activeInvite.expiresAt)}`), e('p', null, '请把邀请信息和配对码发送给 Client。Client 申请后将在此审批。'), e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: createHost }, '重新生成配对码'), e(Button, { disabled: busy, onClick: refresh }, '刷新状态'))), pendingJoinRequests.length > 0 && e(Card, { title: '待审批加入申请' }, pendingJoinRequests.map((req) => e('div', { key: req.id, className: 'nac-request' }, e('div', null, e('strong', null, req.clientName || req.clientId), e('small', null, req.clientId)), approvalFields, e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'approved') }, '同意加入'), e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'rejected') }, '拒绝'))))), e('button', { className: 'nac-link', onClick: leave }, '退出协作组并重新选择网络'));
       if (savedSetup?.role === 'client' && !paired) return e('main', { className: 'nac-page nac-wizard' }, e('header', { className: 'nac-header' }, e('h1', null, '加入协作组')), e(Card, { title: '粘贴 Host 邀请信息' }, e('textarea', { placeholder: '粘贴 Host 提供的邀请信息', value: invite, onChange: (event) => setInvite(event.target.value) }), e('input', { inputMode: 'numeric', maxLength: 6, placeholder: '六位配对码', value: pairCode, onChange: (event) => setPairCode(event.target.value.replace(/\D/g, '').slice(0, 6)) }), e(Button, { disabled: busy || !invite.trim() || pairCode.length !== 6, onClick: requestJoin }, '申请加入'), joinStatus && e('p', null, '申请已发送，等待 Host 审批确认后自动接入。')), e('button', { className: 'nac-link', onClick: leave }, '重新选择网络'));
 
       return e('main', { className: 'nac-page' },
@@ -128,10 +141,12 @@ window.__ModuleLoader__.load({
     }
     function PanelIcon({ size }) { return e('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, 'aria-hidden': true }, e('circle', { cx: 6, cy: 6, r: 2.4 }), e('circle', { cx: 18, cy: 7, r: 2.4 }), e('circle', { cx: 12, cy: 18, r: 2.4 }), e('path', { d: 'M8 7.2l7.7-.5M7.2 8l3.6 7.7m6-6.5l-3.5 6.4' })); }
     return { inject: ['slots'], apply(ctx) {
-      const style = document.createElement('style'); style.textContent = `.nac-page{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);height:100%;overflow:auto;padding:28px 32px;box-sizing:border-box;font:14px/1.45 system-ui,sans-serif}.nac-wizard{max-width:760px;margin:auto}.nac-header{display:flex;justify-content:space-between;gap:16px;margin-bottom:20px}.nac-header h1,.nac-card h2{margin:0 0 8px}.nac-header p,.nac-card p,.nac-card small{color:var(--dsw-alias-label-secondary)}.nac-card,.nac-stat{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:16px;margin:16px 0}.nac-choice-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.nac-button{background:var(--dsw-alias-brand-primary);color:#fff;border:0;border-radius:7px;padding:9px 13px;cursor:pointer;font:inherit}.nac-button:disabled{opacity:.55;cursor:wait}.nac-selected{outline:2px solid var(--dsw-alias-state-success-primary)}.nac-link{display:block;background:none;border:0;color:var(--dsw-alias-brand-primary);padding:8px 0;cursor:pointer}.nac-card input,.nac-card textarea{box-sizing:border-box;width:100%;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l1);border-radius:7px;padding:9px;margin:0 0 9px;font:inherit}.nac-card textarea{min-height:90px;resize:vertical}.nac-alert{padding:10px;border-radius:8px;color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-bg-layer-1)}.nac-onboard{padding:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;display:grid;gap:4px}.nac-onboard-ready{border-color:var(--dsw-alias-state-success-primary)}.nac-stats,.nac-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.nac-stat{margin:0}.nac-stat span,.nac-list small{display:block;color:var(--dsw-alias-label-secondary)}.nac-list{list-style:none;padding:0;margin:0}.nac-list li,.nac-request{padding:10px 0;border-top:1px solid var(--dsw-alias-border-l1)}.nac-list li:first-child,.nac-request:first-child{border-top:0}.nac-empty{color:var(--dsw-alias-label-secondary);padding:10px 0}`; document.head.appendChild(style);
+      const style = document.createElement('style');
+      const extraStyle = '.nac-wizard{min-height:100%;display:flex;flex-direction:column;justify-content:center}.nac-wizard>.nac-card{box-shadow:0 12px 32px rgba(0,0,0,.16);border-radius:14px}.nac-approval-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0}.nac-approval-fields label{display:grid;gap:5px;color:var(--dsw-alias-label-secondary);font-size:12px}.nac-approval-fields select{width:100%;padding:9px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit}@media(max-width:640px){.nac-page{padding:18px}.nac-header,.nac-approval-fields{display:block}.nac-stats,.nac-grid{grid-template-columns:1fr}}';
+      const polish = document.createElement('style'); polish.textContent = extraStyle; document.head.appendChild(polish); style.textContent = `.nac-page{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);height:100%;overflow:auto;padding:28px 32px;box-sizing:border-box;font:14px/1.45 system-ui,sans-serif}.nac-wizard{max-width:760px;margin:auto}.nac-header{display:flex;justify-content:space-between;gap:16px;margin-bottom:20px}.nac-header h1,.nac-card h2{margin:0 0 8px}.nac-header p,.nac-card p,.nac-card small{color:var(--dsw-alias-label-secondary)}.nac-card,.nac-stat{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:16px;margin:16px 0}.nac-choice-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.nac-button{background:var(--dsw-alias-brand-primary);color:#fff;border:0;border-radius:7px;padding:9px 13px;cursor:pointer;font:inherit}.nac-button:disabled{opacity:.55;cursor:wait}.nac-selected{outline:2px solid var(--dsw-alias-state-success-primary)}.nac-link{display:block;background:none;border:0;color:var(--dsw-alias-brand-primary);padding:8px 0;cursor:pointer}.nac-card input,.nac-card textarea{box-sizing:border-box;width:100%;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l1);border-radius:7px;padding:9px;margin:0 0 9px;font:inherit}.nac-card textarea{min-height:90px;resize:vertical}.nac-alert{padding:10px;border-radius:8px;color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-bg-layer-1)}.nac-onboard{padding:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;display:grid;gap:4px}.nac-onboard-ready{border-color:var(--dsw-alias-state-success-primary)}.nac-stats,.nac-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.nac-stat{margin:0}.nac-stat span,.nac-list small{display:block;color:var(--dsw-alias-label-secondary)}.nac-list{list-style:none;padding:0;margin:0}.nac-list li,.nac-request{padding:10px 0;border-top:1px solid var(--dsw-alias-border-l1)}.nac-list li:first-child,.nac-request:first-child{border-top:0}.nac-empty{color:var(--dsw-alias-label-secondary);padding:10px 0}`; document.head.appendChild(style);
       const offA = ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'network-agent-collab', order: 24, label: () => '协作中心' }, PanelIcon));
       const offB = ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'network-agent-collab' }, Dashboard));
-      return () => { style.remove(); offA(); offB(); };
+      return () => { style.remove(); polish.remove(); offA(); offB(); };
     }};
   },
 });

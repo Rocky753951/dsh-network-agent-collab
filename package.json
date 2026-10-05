@@ -1,6 +1,6 @@
 {
   "name": "dsh-network-agent-collab",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Federated multi-client agent collaboration for DeepSeek Harness",
   "type": "module",
   "license": "MIT",

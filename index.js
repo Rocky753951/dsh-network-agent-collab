@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { FederationClient, JsonStore, dataPath } from './src/core.js';
 import { SetupState } from './src/setup-state.js';
-import { encodePairingInvite } from './src/onboarding.js';
+import { decodePairingInvite, encodePairingInvite } from './src/onboarding.js';
 import { startClientPairingSignal, startHostPairingSignal } from './src/pairing-signal.js';
 import { createRelay } from './relay.js';
 import { tailscaleStatus } from './src/tailscale.js';
@@ -34,6 +34,7 @@ export const inject = ['tools', 'agentLoop', 'webServer'];
  * internet: Tailscale health/discovery scaffold only; it intentionally sends no collaboration traffic.
  */
 export function apply(ctx, config = {}) {
+  if (!ctx?.agentLoop || typeof ctx.agentLoop.create !== 'function') throw new Error('NETWORK_AGENT_COLLAB_REQUIRES_AGENT');
   const mode = config.mode || 'lan';
   if (!['lan', 'internet'].includes(mode)) throw new Error('network-agent-collab mode must be lan or internet');
   const networkScope = config.networkScope || 'lan';
@@ -115,6 +116,20 @@ export function apply(ctx, config = {}) {
     await ready;
     return client;
   };
+  const startHostSignal = async (invite) => {
+    await hostSignal?.close?.();
+    hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, onRequest: async (request) => {
+      await setupState.receiveJoinRequest({ request });
+    }});
+  };
+  const startClientSignal = async (request, invite) => {
+    await clientSignal?.close?.();
+    clientSignal = await startClientPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, request, onGrant: async (grant) => {
+      pendingGrant = grant;
+      await setupState.acceptJoinGrant({ grant });
+      await startPairedClient();
+    }});
+  };
   // A pairing is local, durable state. Reconnect it on every plugin startup instead
   // of requiring the user to create a new Host/group after a DSH restart.
   const initialReady = ready;
@@ -137,6 +152,13 @@ export function apply(ctx, config = {}) {
         }
       }
       await startPairedClient();
+      if (configured.setup?.role === 'host') {
+        const invite = setupState.status().activeInvite;
+        if (invite) await startHostSignal(decodePairingInvite(invite.invitation));
+      } else {
+        const pending = setupState.pendingJoinRequest();
+        if (pending) await startClientSignal(pending.request, pending.invite);
+      }
     } else await initialReady;
     return client;
   });
@@ -167,10 +189,11 @@ export function apply(ctx, config = {}) {
         const endpoint = typeof args.endpoint === 'string' && args.endpoint ? args.endpoint : `ws://${advertisedHost}:${embeddedRelay.port}`;
         const created = await setupState.createHost({ transport, endpoint });
         await startPairedClient();
+        await startHostSignal(created.invite);
         return { ...created.status, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, endpoint, relay: { running: true, port: embeddedRelay.port } };
       },
       async pairLeave() {
-        client?.close(); client = null; ready = Promise.resolve(null);
+        client?.close(); client = null; await hostSignal?.close?.(); await clientSignal?.close?.(); hostSignal = null; clientSignal = null; pendingGrant = null; ready = Promise.resolve(null);
         if (embeddedRelay) { await embeddedRelay.close(); embeddedRelay = null; }
         await setupReady; return setupState.leave();
       },
@@ -178,14 +201,24 @@ export function apply(ctx, config = {}) {
       async joinRequest(args = {}) {
         await setupReady;
         const role = setupState.status().setup?.role;
-        if (role === 'client') return setupState.requestJoin({ ...args, invitation: args.invitation || args.invite, code: args.code || args.pairCode });
+        if (role === 'client') {
+          const invitation = args.invitation || args.invite;
+          const result = await setupState.requestJoin({ ...args, invitation, code: args.code || args.pairCode });
+          const invite = decodePairingInvite(invitation);
+          await startClientSignal(result.request, invite);
+          return result;
+        }
         if (role === 'host') return setupState.receiveJoinRequest(args);
         throw new Error('SETUP_ROLE_REQUIRED');
       },
       async joinDecide(args = {}) {
         await setupReady;
         const role = setupState.status().setup?.role;
-        if (role === 'host') return setupState.decideJoin(args);
+        if (role === 'host') {
+          const result = await setupState.decideJoin(args);
+          if (result.grant && hostSignal) await hostSignal.sendGrant(result.grant);
+          return { ...result, grant: result.grant ? { requestId: result.grant.requestId, approved: true } : undefined };
+        }
         if (role === 'client') { const result = await setupState.acceptJoinGrant(args); await startPairedClient(); return result; }
         throw new Error('SETUP_ROLE_REQUIRED');
       },
@@ -294,7 +327,7 @@ export function apply(ctx, config = {}) {
         async execute(args) { return { published: true, id: await (await requireLan()).task(args) }; },
       }),
     ];
-    return () => { client?.close(); embeddedRelay?.close(); fallbackUi?.close(); unregisterUi(); unregister.forEach((dispose) => dispose()); };
+    return () => { client?.close(); hostSignal?.close?.(); clientSignal?.close?.(); embeddedRelay?.close(); fallbackUi?.close(); unregisterUi(); unregister.forEach((dispose) => dispose()); };
   });
 }
 apply.inject = inject;

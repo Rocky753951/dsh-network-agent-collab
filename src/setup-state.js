@@ -7,6 +7,12 @@ const VERSION = 1;
 const NETWORKS = new Set(['lan', 'public']);
 const LAN_TRANSPORTS = new Set(['local', 'tailscale']);
 const ROLES = new Set(['host', 'client']);
+const ACCESS_DURATIONS = new Set(['once', '24h', 'permanent']);
+const ACCESS_LEVELS = new Set(['communication', 'wake-approval', 'trusted']);
+
+function grantExpiry(duration, now) {
+  return duration === '24h' ? now + 24 * 60 * 60 * 1000 : duration === 'permanent' ? null : now;
+}
 
 async function saveJson(path, value) {
   await mkdir(dirname(path), { recursive: true });
@@ -75,7 +81,7 @@ export class SetupState {
       } : null,
       pendingRequests: Object.values(this.state.pendingRequests || {}).map(({ id, clientId, clientName, inviteId, createdAt }) => ({ id, clientId, clientName, inviteId, createdAt })),
       pendingJoin: this.state.pendingJoin ? { id: this.state.pendingJoin.id, hostId: this.state.pendingJoin.invite.hostId, hostName: this.state.pendingJoin.invite.hostName, endpoint: this.state.pendingJoin.invite.endpoint, expiresAt: this.state.pendingJoin.invite.expiresAt } : null,
-      members: Object.values(this.state.members || {}).map(({ id, name, approvedAt }) => ({ id, name, approvedAt })),
+      members: Object.values(this.state.members || {}).map(({ id, name, approvedAt, duration, permissionLevel, expiresAt }) => ({ id, name, approvedAt, duration, permissionLevel, expiresAt })), 
     });
   }
 
@@ -127,6 +133,8 @@ export class SetupState {
     const mismatch = verifyPairingCode(invite, request.code, now);
     if (mismatch) throw new Error(`PAIRING_REQUEST_REJECTED: ${mismatch}`);
     if (this.state.usedInviteIds.includes(invite.id)) throw new Error('PAIRING_INVITE_ALREADY_USED');
+    if (Object.values(this.state.members || {}).some((member) => member.id === request.clientId)) throw new Error('PAIRING_AGENT_ALREADY_MATCHED');
+    if (Object.values(this.state.pendingRequests || {}).some((pending) => pending.clientId === request.clientId)) throw new Error('PAIRING_REQUEST_ALREADY_PENDING');
     const pending = { id: request.id || randomUUID(), inviteId: invite.id, clientId: request.clientId, clientName: typeof request.clientName === 'string' ? request.clientName.slice(0, 80) : request.clientId, createdAt: now };
     this.state.pendingRequests[pending.id] = pending;
     await this.persist();
@@ -134,19 +142,23 @@ export class SetupState {
   }
 
   /** Host decision is the only point at which encrypted-room material is released. */
-  async decideJoin({ requestId, decision, now = Date.now() } = {}) {
+  async decideJoin({ requestId, decision, duration = 'once', permissionLevel = 'communication', now = Date.now() } = {}) {
     if (this.state?.setup?.role !== 'host' || !this.state.group) throw new Error('SETUP_HOST_GROUP_REQUIRED');
     if (!['approved', 'rejected'].includes(decision)) throw new Error('PAIRING_DECISION_INVALID');
+    if (!ACCESS_DURATIONS.has(duration)) throw new Error('PAIRING_DURATION_INVALID');
+    if (!ACCESS_LEVELS.has(permissionLevel)) throw new Error('PAIRING_PERMISSION_INVALID');
     const request = this.state.pendingRequests?.[requestId];
     if (!request) throw new Error('PAIRING_REQUEST_NOT_FOUND');
     delete this.state.pendingRequests[requestId];
     if (decision === 'rejected') { await this.persist(); return { decision, requestId }; }
     const invite = this.state.group.invites?.[request.inviteId];
     if (!invite || this.state.usedInviteIds.includes(invite.id) || invite.expiresAt <= now) throw new Error('PAIRING_INVITE_UNAVAILABLE');
+    if (Object.keys(this.state.members || {}).length > 0) throw new Error('PAIRING_AGENT_ALREADY_MATCHED');
     this.state.usedInviteIds.push(invite.id);
-    this.state.members[request.clientId] = { id: request.clientId, name: request.clientName, approvedAt: now };
+    const expiresAt = grantExpiry(duration, now);
+    this.state.members[request.clientId] = { id: request.clientId, name: request.clientName, approvedAt: now, duration, permissionLevel, expiresAt };
     await this.persist();
-    return { decision, requestId, grant: { requestId, hostId: this.identity.id, hostName: this.identity.name, endpoint: this.state.group.endpoint, roomId: this.state.group.id, secret: this.state.group.secret, approvedAt: now } };
+    return { decision, requestId, grant: { requestId, hostId: this.identity.id, hostName: this.identity.name, endpoint: this.state.group.endpoint, roomId: this.state.group.id, secret: this.state.group.secret, approvedAt: now, duration, permissionLevel, expiresAt } };
   }
 
   /** Client explicitly confirms and stores a Host-issued approved grant. */
@@ -168,6 +180,12 @@ export class SetupState {
   pairing() {
     if (!this.state?.group) return null;
     return { roomId: this.state.group.id, secret: this.state.group.secret, endpoint: this.state.group.endpoint };
+  }
+
+  pendingJoinRequest() {
+    if (!this.state?.pendingJoin) return null;
+    const request = this.state.pendingJoin;
+    return { request: { id: request.id, inviteId: request.invite.id, clientId: request.clientId, clientName: request.clientName, createdAt: request.createdAt, invitation: encodePairingInvite(request.invite), code: request.code }, invite: request.invite };
   }
 
   async leave() {

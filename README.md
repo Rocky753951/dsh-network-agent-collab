@@ -57,7 +57,7 @@ relayUrl: ws://主机公网地址:8787
 
 旧配置 `mode: internet` 仍保留兼容性，但不再推荐；请使用上面的 `networkScope`。
 
-## 安装
+## 安装与首次连接
 
 在插件目录执行：
 
@@ -65,30 +65,15 @@ relayUrl: ws://主机公网地址:8787
 dsh plugin --profile web add ./
 ```
 
-配置每台 DSH 的 bundle。LAN/Tailscale Relay 模式必须使用相同的 `roomId` 与 `sharedSecret`。`agentId` 可省略，插件会按本机主机名自动生成稳定 ID；如果同一主机运行多个 DSH 实例，请手动指定唯一 ID：
+插件必须加载在已有 Agent 上；没有 `agentLoop` 会拒绝启动。首次打开“协作中心”按三个可返回步骤操作：
 
-```yaml
-- name: dsh-network-agent-collab
-  config:
-    mode: lan
-    relayUrl: ws://192.168.1.10:8787
-    roomId: engineering-alpha
-    sharedSecret: "替换为 openssl rand -base64 32 的输出"
-    agentName: agent-a
-    agentId: host-a-agent
-    capabilities: [chat, tasks, activation]
-```
+1. 选择“局域网”或“公网 P2P”；
+2. 选择 Host 或 Client（局域网还可选择物理网/Tailscale）；
+3. Host 启动后生成 Host 邀请和六位匹配码，Client 粘贴两者申请加入。
 
-互联网 / Tailscale 脚手架示例：
+Host 会在页面实时显示 Client 申请，可选择：单次/24 小时/永久，以及仅通信/可唤醒 Agent（需审批）/无条件信任。每个 Agent 只允许匹配一次。配对密钥只在 Host 批准后通过信令发送，状态和日志不会展示密钥。
 
-```yaml
-- name: dsh-network-agent-collab
-  config:
-    mode: internet
-    agentName: agent-a
-    agentId: host-a-agent
-```
-
+公网 Host 必须填写客户端可访问的 `wss://` Relay 地址，并自行配置端口转发、TLS 和防火墙；公网 P2P 不提供免费的 NAT 穿透服务。
 ## 启动局域网 Relay
 
 在局域网中一台可访问的机器上：
