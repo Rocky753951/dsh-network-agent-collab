@@ -5,6 +5,7 @@ import { FederationClient, JsonStore, dataPath } from './src/core.js';
 import { SetupState } from './src/setup-state.js';
 import { decodePairingInvite, encodePairingInvite } from './src/onboarding.js';
 import { startClientPairingSignal, startHostPairingSignal } from './src/pairing-signal.js';
+import { DirectPeer } from './src/direct-peer.js';
 import { createRelay } from './relay.js';
 import { tailscaleStatus } from './src/tailscale.js';
 import { createUiHandler } from './src/ui-server.js';
@@ -54,6 +55,8 @@ export function apply(ctx, config = {}) {
   let hostSignal = null;
   let clientSignal = null;
   let pendingGrant = null;
+  let directPeer = null;
+  let directOffer = null;
   // Stable by default on one machine; users may override when several DSH instances share a hostname.
   const configuredAgentId = config.agentId;
   const agentId = configuredAgentId && !configuredAgentId.startsWith('CHANGE_ME')
@@ -111,7 +114,7 @@ export function apply(ctx, config = {}) {
     client?.close();
     const configured = setupState.status();
     const dynamicIdentity = { id: configured.identity.id, name: configured.identity.name, capabilities: config.capabilities || ['chat', 'tasks', 'activation'], networkScope: configured.setup.network, lanTransport: configured.setup.lanTransport || 'local', publicRole: configured.setup.role };
-    client = new FederationClient({ relayUrl: pairing.endpoint, roomId: pairing.roomId, secret: pairing.secret, identity: dynamicIdentity, store: new JsonStore(dataPath(stateDir, pairing.roomId)), privilegedApproverIds: config.privilegedApproverIds || [], onActivation: deliverActivation });
+    client = new FederationClient({ relayUrl: pairing.endpoint, transport: pairing.endpoint.startsWith('direct://') ? directPeer : null, roomId: pairing.roomId, secret: pairing.secret, identity: dynamicIdentity, store: new JsonStore(dataPath(stateDir, pairing.roomId)), privilegedApproverIds: config.privilegedApproverIds || [], onActivation: deliverActivation });
     ready = client.start();
     await ready;
     return client;
@@ -177,16 +180,21 @@ export function apply(ctx, config = {}) {
         await setupReady;
         const status = setupState.status();
         if (!status.setup || status.setup.role !== 'host') throw new Error('SETUP_HOST_ROLE_REQUIRED');
-        if (!embeddedRelay) embeddedRelay = await createRelay({ port: Number.isSafeInteger(args.port) ? args.port : 0 });
         const transport = status.setup.network === 'lan' ? status.setup.lanTransport : 'public';
+        if (transport === 'public') {
+          directPeer?.close();
+          directPeer = new DirectPeer({ role: 'host' });
+          directOffer = await directPeer.createOffer();
+          const created = await setupState.createHost({ transport, endpoint: 'direct://manual' });
+          await startPairedClient();
+          return { ...created.status, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, endpoint: 'direct://manual', directOffer, relay: { running: false } };
+        }
+        if (!embeddedRelay) embeddedRelay = await createRelay({ port: Number.isSafeInteger(args.port) ? args.port : 0 });
         const tailscale = transport === 'tailscale' ? await tailscaleStatus() : null;
         const advertisedHost = transport === 'tailscale'
           ? String(tailscale?.self?.dnsName || tailscale?.self?.addresses?.[0] || '').replace(/\.+$/, '')
           : localAddress();
         if (transport === 'tailscale' && !advertisedHost) throw new Error('TAILSCALE_NOT_READY');
-        // Public mode is zero-cost direct Host mode: the embedded socket server runs on
-        // the Host itself. The user may advertise a public ws:// or wss:// address;
-        // no third-party relay or NAT traversal service is required.
         const endpoint = typeof args.endpoint === 'string' && args.endpoint ? args.endpoint : `ws://${advertisedHost}:${embeddedRelay.port}`;
         const created = await setupState.createHost({ transport, endpoint });
         await startPairedClient();
@@ -194,11 +202,38 @@ export function apply(ctx, config = {}) {
         return { ...created.status, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, endpoint, relay: { running: true, port: embeddedRelay.port } };
       },
       async pairLeave() {
-        client?.close(); client = null; await hostSignal?.close?.(); await clientSignal?.close?.(); hostSignal = null; clientSignal = null; pendingGrant = null; ready = Promise.resolve(null);
+        client?.close(); client = null; directPeer?.close(); directPeer = null; directOffer = null; await hostSignal?.close?.(); await clientSignal?.close?.(); hostSignal = null; clientSignal = null; pendingGrant = null; ready = Promise.resolve(null);
         if (embeddedRelay) { await embeddedRelay.close(); embeddedRelay = null; }
         await setupReady; return setupState.leave();
       },
       async relayRetry(args = {}) { return this.hostCreate(args); },
+      async directOffer(args = {}) {
+        await setupReady;
+        if (setupState.status().setup?.role !== 'client') throw new Error('SETUP_CLIENT_ROLE_REQUIRED');
+        if (!args.offer || !args.invitation) throw new Error('DIRECT_OFFER_AND_INVITATION_REQUIRED');
+        const invite = decodePairingInvite(args.invitation);
+        if (invite.endpoint !== 'direct://manual') throw new Error('DIRECT_INVITATION_REQUIRED');
+        directPeer?.close();
+        directPeer = new DirectPeer({ role: 'client' });
+        const answer = await directPeer.acceptOffer(args.offer);
+        const result = await setupState.requestJoin({ invitation: args.invitation, code: args.code || args.pairCode, clientName: args.clientName });
+        return { ...result, answer };
+      },
+      async directAnswer(args = {}) {
+        await setupReady;
+        if (setupState.status().setup?.role !== 'host' || !directPeer) throw new Error('DIRECT_HOST_NOT_READY');
+        if (!args.answer || typeof args.clientId !== 'string') throw new Error('DIRECT_ANSWER_INVALID');
+        directPeer.acceptAnswer(args.answer);
+        const request = await setupState.receiveJoinRequest({ request: { id: args.requestId || randomUUID(), inviteId: args.inviteId, clientId: args.clientId, clientName: args.clientName || args.clientId, createdAt: Date.now(), invitation: args.invitation, code: args.code } });
+        return { ...request, connected: true };
+      },
+      async directGrant(args = {}) {
+        await setupReady;
+        if (setupState.status().setup?.role !== 'client' || !directPeer) throw new Error('DIRECT_CLIENT_NOT_READY');
+        const result = await setupState.acceptJoinGrant({ grant: args.grant });
+        await startPairedClient();
+        return result;
+      },
       async joinRequest(args = {}) {
         await setupReady;
         const role = setupState.status().setup?.role;
@@ -218,6 +253,7 @@ export function apply(ctx, config = {}) {
         if (role === 'host') {
           const result = await setupState.decideJoin(args);
           if (result.grant && hostSignal) await hostSignal.sendGrant(result.grant);
+          if (result.grant && directPeer) return { ...result, grant: undefined, directGrant: result.grant };
           return { ...result, grant: result.grant ? { requestId: result.grant.requestId, approved: true } : undefined };
         }
         if (role === 'client') { const result = await setupState.acceptJoinGrant(args); await startPairedClient(); return result; }

@@ -113,16 +113,31 @@ export function applyEnvelope(state, envelope) {
 }
 
 export class FederationClient {
-  constructor({ relayUrl, roomId, secret, identity, store, privilegedApproverIds = [], WebSocketImpl = globalThis.WebSocket, onChange = () => {}, onActivation = async () => {} }) {
-    if (!WebSocketImpl) throw new Error('WebSocket is unavailable in this Node runtime');
-    this.relayUrl = relayUrl; this.roomId = roomId; this.secret = secret; this.identity = identity;
+  constructor({ relayUrl, roomId, secret, identity, store, transport = null, privilegedApproverIds = [], WebSocketImpl = globalThis.WebSocket, onChange = () => {}, onActivation = async () => {} }) {
+    if (!transport && !WebSocketImpl) throw new Error('WebSocket is unavailable in this Node runtime');
+    this.relayUrl = relayUrl; this.roomId = roomId; this.secret = secret; this.identity = identity; this.transport = transport;
     this.privilegedApproverIds = new Set(privilegedApproverIds);
     this.store = store; this.WebSocketImpl = WebSocketImpl; this.onChange = onChange; this.onActivation = onActivation;
     this.state = null; this.socket = null; this.reconnectTimer = null; this.closed = false;
   }
-  async start() { this.state = await this.store.load(defaultState(this.identity)); this.connect(); return this; }
+  async start() { this.state = await this.store.load(defaultState(this.identity)); if (this.transport) this.attachTransport(); else this.connect(); return this; }
   snapshot() { return structuredClone(this.state); }
-  isConnected() { return this.socket?.readyState === this.WebSocketImpl.OPEN; }
+  isConnected() { return this.transport ? this.transport.isOpen() : this.socket?.readyState === this.WebSocketImpl.OPEN; }
+  attachTransport() {
+    this.transport.setMessageHandler((raw) => this.handleIncoming(raw));
+  }
+  async handleIncoming(raw) {
+    try {
+      const envelope = JSON.parse(typeof raw === 'string' ? raw : Buffer.from(raw).toString('utf8'));
+      if (envelope.roomId !== this.roomId || envelope.sender === this.identity.id) return;
+      if ((envelope.kind === 'activation' || envelope.kind === 'message') && envelope.body?.to && envelope.body.to !== 'all' && envelope.body.to !== this.identity.id) return;
+      if (envelope.kind === 'activation' && envelope.body?.target && envelope.body.target !== 'all' && envelope.body.target !== this.identity.id) return;
+      if (!validateEnvelope(envelope, this.secret) && applyEnvelope(this.state, envelope)) {
+        await this.persist();
+        if (envelope.kind === 'activation') await this.deliverActivation(envelope.body.id);
+      }
+    } catch { /* Ignore malformed direct traffic. */ }
+  }
   async persist() { await this.store.save(this.state); this.onChange(this.snapshot()); }
   async deliverActivation(activationId) {
     const activation = this.state.activations[activationId];
@@ -143,30 +158,21 @@ export class FederationClient {
     if (this.closed) return;
     const socket = this.socket = new this.WebSocketImpl(this.relayUrl);
     socket.addEventListener('open', () => { this.publish('presence', { name: this.identity.name, capabilities: this.identity.capabilities, status: 'online' }); });
-    socket.addEventListener('message', async (event) => {
-      try {
-        const envelope = JSON.parse(typeof event.data === 'string' ? event.data : Buffer.from(event.data).toString('utf8'));
-        if (envelope.roomId !== this.roomId || envelope.sender === this.identity.id) return;
-        if ((envelope.kind === 'activation' || envelope.kind === 'message') && envelope.body?.to && envelope.body.to !== 'all' && envelope.body.to !== this.identity.id) return;
-        if (envelope.kind === 'activation' && envelope.body?.target && envelope.body.target !== 'all' && envelope.body.target !== this.identity.id) return;
-        if (!validateEnvelope(envelope, this.secret) && applyEnvelope(this.state, envelope)) {
-          await this.persist();
-          if (envelope.kind === 'activation') await this.deliverActivation(envelope.body.id);
-        }
-      } catch { /* Ignore malformed relay traffic. */ }
-    });
+    socket.addEventListener('message', (event) => this.handleIncoming(event.data));
     socket.addEventListener('close', () => this.scheduleReconnect());
     socket.addEventListener('error', () => { try { socket.close(); } catch {} });
   }
   scheduleReconnect() { if (!this.closed && !this.reconnectTimer) this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect(); }, 2000); }
   publish(kind, body) {
-    if (this.socket?.readyState !== this.WebSocketImpl.OPEN) {
+    if (this.transport) {
+      if (!this.transport.isOpen()) { const error = new Error('DIRECT_CHANNEL_NOT_OPEN'); error.code = 'DIRECT_CHANNEL_NOT_OPEN'; throw error; }
+    } else if (this.socket?.readyState !== this.WebSocketImpl.OPEN) {
       const error = new Error('RELAY_UNAVAILABLE: collaboration relay is not connected');
       error.code = 'RELAY_UNAVAILABLE';
       throw error;
     }
     const envelope = createEnvelope({ roomId: this.roomId, sender: this.identity.id, kind, body, secret: this.secret });
-    this.socket.send(JSON.stringify(envelope));
+    if (this.transport) this.transport.send(JSON.stringify(envelope)); else this.socket.send(JSON.stringify(envelope));
     return envelope;
   }
   async message({ to = 'all', text, topic = 'general' }) {
@@ -196,7 +202,7 @@ export class FederationClient {
     if (decision === 'approved') await this.deliverActivation(activationId);
     return envelope.id;
   }
-  close() { this.closed = true; clearTimeout(this.reconnectTimer); try { this.socket?.close(); } catch {} }
+  close() { this.closed = true; clearTimeout(this.reconnectTimer); try { this.socket?.close(); } catch {} try { this.transport?.close(); } catch {} }
 }
 
 export function dataPath(baseDir, roomId) { return join(baseDir, `network-agent-collab-${roomId.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`); }

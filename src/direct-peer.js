@@ -22,8 +22,11 @@ function localDescription(pc, transform) {
   });
 }
 
-function validateSignal(signal) {
-  if (!signal || typeof signal !== 'object' || !['offer', 'answer'].includes(signal.type) || typeof signal.sdp !== 'string' || signal.sdp.length > MAX_SIGNAL_BYTES) {
+function validateSignal(signal, expectedType) {
+  if (!signal || typeof signal !== 'object' || signal.type !== expectedType || typeof signal.sdp !== 'string' || !signal.sdp.trim() || signal.sdp.length > MAX_SIGNAL_BYTES) {
+    throw new Error('DIRECT_SIGNAL_INVALID');
+  }
+  if (signal.candidates !== undefined && (!Array.isArray(signal.candidates) || signal.candidates.some((item) => !item || typeof item !== 'object' || typeof item.candidate !== 'string' || (item.mid !== undefined && typeof item.mid !== 'string')))) {
     throw new Error('DIRECT_SIGNAL_INVALID');
   }
   return signal;
@@ -59,6 +62,9 @@ export class DirectPeer {
     channel.onClosed(() => { if (this.channel === channel) this.channel = null; });
   }
 
+  setMessageHandler(handler) { this.onMessage = handler; }
+  isOpen() { return Boolean(this.channel?.isOpen()); }
+
   async createOffer() {
     if (this.role !== 'host') throw new Error('DIRECT_HOST_REQUIRED');
     const offer = localDescription(this.pc, (sdp, type) => safeSignal({ type: type === ANSWER ? 'answer' : 'offer', sdp, candidates: this.localCandidates }));
@@ -69,7 +75,7 @@ export class DirectPeer {
 
   acceptOffer(signal) {
     if (this.role !== 'client') throw new Error('DIRECT_CLIENT_REQUIRED');
-    const offer = validateSignal(signal);
+    const offer = validateSignal(signal, 'offer');
     const answer = localDescription(this.pc, (sdp, type) => safeSignal({ type: type === OFFER ? 'offer' : 'answer', sdp, candidates: this.localCandidates }));
     this.pc.setRemoteDescription(offer.sdp, OFFER);
     for (const item of offer.candidates || []) this.pc.addRemoteCandidate(item.candidate, item.mid || '0');
@@ -78,7 +84,7 @@ export class DirectPeer {
 
   acceptAnswer(signal) {
     if (this.role !== 'host') throw new Error('DIRECT_HOST_REQUIRED');
-    const answer = validateSignal(signal);
+    const answer = validateSignal(signal, 'answer');
     this.pc.setRemoteDescription(answer.sdp, ANSWER);
     for (const item of answer.candidates || []) this.pc.addRemoteCandidate(item.candidate, item.mid || '0');
   }

@@ -1,4 +1,4 @@
-# DSH Network Agent Collab
+# dsh-network-agent-collab
 
 多端 DSH Agent 协作插件，连接方式分为两大类：**局域网**（普通局域网或 Tailscale 虚拟局域网）与**公网**（一台电脑作为 Host/Relay，其余电脑作为 Client）。
 
