@@ -9,6 +9,7 @@
     "./relay": "./relay.js",
     "./core": "./src/core.js",
     "./onboarding": "./src/onboarding.js",
+    "./direct-peer": "./src/direct-peer.js",
     "./client": "./client.js"
   },
   "scripts": {
@@ -16,10 +17,17 @@
     "relay": "node relay.js"
   },
   "dependencies": {
+    "node-datachannel": "^0.33.4",
     "ws": "^8.18.0"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web", "immediately": true, "inject": [] }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
   }
 }

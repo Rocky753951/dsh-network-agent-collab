@@ -44,16 +44,9 @@ Tailscale 是局域网的子选项，不是独立的公网模式。
 
 ### 公网 Host/Client
 
-一台电脑运行 Relay 并作为主机，其他电脑连接它：
+公网模式不要求第三方 Relay、V2Ray 或 IPv6。公网直连实验实现使用 WebRTC ICE/DataChannel：STUN 只发现 IPv4 地址，Host/Client 通过复制粘贴 Offer/Answer 完成手动信令，协作数据在打洞成功后直连传输。
 
-```yaml
-networkScope: public
-publicRole: host           # 主机电脑
-# publicRole: client       # 其他电脑
-relayUrl: ws://主机公网地址:8787
-```
-
-公网使用时应配置端口转发、防火墙规则，并在生产环境使用 `wss://`、设备配对和 TLS。Host 下线时 Client 无法继续通信。
+Host 仍需具备可用的 IPv4 入站条件（公网地址、端口转发或可用的 UPnP）。对称 NAT、CGNAT 或 UDP 被封锁时会明确报告直连失败，不回退到付费中继。
 
 旧配置 `mode: internet` 仍保留兼容性，但不再推荐；请使用上面的 `networkScope`。
 
