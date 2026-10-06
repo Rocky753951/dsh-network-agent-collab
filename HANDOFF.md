@@ -8,9 +8,9 @@ https://github.com/Rocky753951/dsh-network-agent-collab
 
 ## 当前版本
 
-- 版本：0.4.9
+- 版本：0.4.10
 - 最新提交：见仓库 `git log -1`（本交接文档随发布提交同步）
-- 包文件：`dsh-network-agent-collab-0.4.9.tgz`
+- 包文件：`dsh-network-agent-collab-0.4.10.tgz`
 
 ## 已实现
 
@@ -20,7 +20,7 @@ https://github.com/Rocky753951/dsh-network-agent-collab
 - 审批时长：单次、24 小时、永久。
 - 权限等级：仅通信、唤醒 Agent 需审批、无条件信任。
 - Client 与 Host 的 Agent 一对一匹配限制。
-- 公网 IPv4 WebRTC DataChannel 直连基础：STUN、手动 Offer/Answer、Grant 确认。
+- 公网 IPv4 WebRTC DataChannel 直连基础：STUN、手动 Offer/Answer、Grant 确认；信令在 ICE gathering 完成后导出最终 SDP。
 - LAN 未提供 `sharedSecret` 时自动生成并持久化受保护的本地 secret；无需手工配置即可启动。
 - 不依赖 V2Ray、IPv6、付费 Relay 或 TURN。
 
@@ -34,7 +34,7 @@ node --check client.js
 npm test
 ```
 
-当前测试为 28/28 通过（以 `npm test` 实际输出为准）。
+当前测试为 31/31 通过（以 `npm test` 实际输出为准）。
 
 ## 公网直连使用边界
 
@@ -43,5 +43,5 @@ Host 生成 Offer；Client 粘贴 Offer 并生成申请包；Host 粘贴 Answer�
 ## 发布包
 
 ```text
-https://github.com/Rocky753951/dsh-network-agent-collab/raw/main/dsh-network-agent-collab-0.4.9.tgz
+https://github.com/Rocky753951/dsh-network-agent-collab/raw/main/dsh-network-agent-collab-0.4.10.tgz
 ```

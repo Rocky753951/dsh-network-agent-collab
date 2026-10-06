@@ -81,6 +81,54 @@ test('DirectPeer validates signal direction and rejects malformed offers/answers
   host.acceptAnswer(answer);
 });
 
+class GatheringPeerConnection extends FakePeerConnection {
+  constructor(...args) {
+    super(...args);
+    this.gathering = 'gathering';
+    this.gatheringHandler = null;
+    this.finalDescription = null;
+    this.localDescription = () => this.finalDescription;
+  }
+  gatheringState() { return this.gathering; }
+  onGatheringStateChange(handler) { this.gatheringHandler = handler; }
+  completeDescription(type) {
+    queueMicrotask(() => {
+      const name = type.toLowerCase();
+      this.descriptionHandler?.(`v=0\\r\\nearly-${name}-without-candidates`, type);
+      this.finalDescription = { sdp: `v=0\\r\\nfinal-${name}-with-candidate`, type };
+      this.candidateHandler?.('candidate:host 1 UDP 1 192.168.1.2 1234 typ host', '0');
+      this.candidateHandler?.('candidate:srflx 1 UDP 1 198.51.100.2 4567 typ srflx raddr 0.0.0.0 rport 0', '0');
+      this.gathering = 'complete';
+      this.gatheringHandler?.('complete');
+    });
+  }
+  createDataChannel() {
+    this.channel = new FakeChannel();
+    this.completeDescription('Offer');
+    return this.channel;
+  }
+  setRemoteDescription(sdp, type) {
+    super.setRemoteDescription(sdp, type);
+    if (type === 'Offer') this.completeDescription('Answer');
+  }
+}
+
+test('manual signaling returns final offer and answer SDP after ICE gathering', async () => {
+  const host = new DirectPeer({ role: 'host', PeerConnectionImpl: GatheringPeerConnection });
+  const client = new DirectPeer({ role: 'client', PeerConnectionImpl: GatheringPeerConnection });
+  const offer = await host.createOffer();
+  assert.match(offer.sdp, /final-offer-with-candidate/);
+  assert.doesNotMatch(offer.sdp, /early-offer/);
+  assert.equal(offer.candidates.length, 1);
+  assert.match(offer.candidates[0].candidate, /typ srflx/);
+
+  const answer = await client.acceptOffer(offer);
+  assert.match(answer.sdp, /final-answer-with-candidate/);
+  assert.doesNotMatch(answer.sdp, /early-answer/);
+  assert.equal(answer.candidates.length, 1);
+  assert.match(answer.candidates[0].candidate, /typ srflx/);
+});
+
 test('FederationClient sends and receives authenticated messages over DirectPeer transport', async () => {
   const received = [];
   const host = new DirectPeer({ role: 'host', PeerConnectionImpl: FakePeerConnection });
