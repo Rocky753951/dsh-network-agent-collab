@@ -11,7 +11,8 @@ const ACCESS_DURATIONS = new Set(['once', '24h', 'permanent']);
 const ACCESS_LEVELS = new Set(['communication', 'wake-approval', 'trusted']);
 
 function grantExpiry(duration, now) {
-  return duration === '24h' ? now + 24 * 60 * 60 * 1000 : duration === 'permanent' ? null : now;
+  // A one-shot grant is consumed on confirmation, not expired at approval time.
+  return duration === '24h' ? now + 24 * 60 * 60 * 1000 : null;
 }
 
 async function saveJson(path, value) {
@@ -34,6 +35,8 @@ function redactGroup(group) {
     endpoint: group.endpoint,
     createdAt: group.createdAt,
     expiresAt: group.expiresAt,
+    permissionLevel: group.permissionLevel,
+    duration: group.duration,
   };
 }
 
@@ -164,11 +167,11 @@ export class SetupState {
   }
 
   /** Client explicitly confirms and stores a Host-issued approved grant. */
-  async acceptJoinGrant({ grant } = {}) {
+  async acceptJoinGrant({ grant, now = Date.now() } = {}) {
     const pending = this.state?.pendingJoin;
     if (this.state?.setup?.role !== 'client' || !pending) throw new Error('PAIRING_CLIENT_CONFIRMATION_REQUIRED');
-    if (!grant || grant.requestId !== pending.id || grant.hostId !== pending.invite.hostId || grant.endpoint !== pending.invite.endpoint || typeof grant.roomId !== 'string' || typeof grant.secret !== 'string' || Buffer.from(grant.secret, 'base64url').length < 32 || typeof grant.endpoint !== 'string' || !verifyPairingGrant(grant, pending.invite)) throw new Error('PAIRING_GRANT_INVALID');
-    this.state.group = { id: grant.roomId, name: grant.hostName || grant.hostId, transport: this.state.setup.network === 'lan' ? this.state.setup.lanTransport : 'public', endpoint: grant.endpoint, secret: grant.secret, createdAt: grant.approvedAt || Date.now(), joinedAt: Date.now(), hostId: grant.hostId };
+    if (!grant || grant.requestId !== pending.id || grant.hostId !== pending.invite.hostId || grant.endpoint !== pending.invite.endpoint || typeof grant.roomId !== 'string' || typeof grant.secret !== 'string' || Buffer.from(grant.secret, 'base64url').length < 32 || typeof grant.endpoint !== 'string' || !['once', '24h', 'permanent'].includes(grant.duration) || !['communication', 'wake-approval', 'trusted'].includes(grant.permissionLevel) || (grant.expiresAt !== null && (!Number.isSafeInteger(grant.expiresAt) || grant.expiresAt < now)) || !verifyPairingGrant(grant, pending.invite)) throw new Error('PAIRING_GRANT_INVALID');
+    this.state.group = { id: grant.roomId, name: grant.hostName || grant.hostId, transport: this.state.setup.network === 'lan' ? this.state.setup.lanTransport : 'public', endpoint: grant.endpoint, secret: grant.secret, createdAt: grant.approvedAt || Date.now(), joinedAt: Date.now(), hostId: grant.hostId, duration: grant.duration, permissionLevel: grant.permissionLevel, expiresAt: grant.expiresAt };
     this.state.pendingJoin = null;
     await this.persist();
     return this.status();
@@ -177,7 +180,10 @@ export class SetupState {
   async removeMember({ memberId } = {}) {
     if (this.state?.setup?.role !== 'host' || typeof memberId !== 'string') throw new Error('PAIRING_MEMBER_INVALID');
     if (!this.state.members?.[memberId]) throw new Error('PAIRING_MEMBER_NOT_FOUND');
-    delete this.state.members[memberId]; await this.persist(); return this.status();
+    delete this.state.members[memberId];
+    // Rotate the room key so a removed client cannot continue using its grant.
+    this.state.group.secret = randomBytes(32).toString('base64url');
+    await this.persist(); return this.status();
   }
 
   pairing() {

@@ -5,7 +5,6 @@ const MAX_BYTES = 32 * 1024;
 function json(res, status, value) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Cache-Control': 'no-store',
@@ -30,6 +29,10 @@ async function bodyOf(req) {
 export function createUiHandler(api, prefix = '') {
   return async (req, res) => {
     if (req.method === 'OPTIONS') return json(res, 204, null);
+    const origin = req.headers.origin;
+    if (origin) {
+      try { const host = new URL(origin).hostname; if (!['127.0.0.1', 'localhost', '[::1]'].includes(host)) return json(res, 403, { error: 'ORIGIN_NOT_ALLOWED' }); } catch { return json(res, 403, { error: 'ORIGIN_NOT_ALLOWED' }); }
+    }
     try {
       const path = new URL(req.url, 'http://127.0.0.1').pathname.slice(prefix.length) || '/';
       if (req.method === 'GET' && path === '/health') return json(res, 200, { ok: true });

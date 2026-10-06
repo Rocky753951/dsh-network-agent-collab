@@ -51,6 +51,24 @@ test('approved target activation invokes the local delivery bridge exactly once'
   assert.equal(client.state.activations['A-2'].deliveryStatus, 'started');
 });
 
+test('host access remains valid after invitation TTL expires', async () => {
+  const sent = [];
+  const transport = { isOpen: () => true, send(value) { sent.push(value); }, setMessageHandler() {} };
+  const client = new FederationClient({
+    relayUrl: 'direct://manual', roomId: 'alpha', secret: base.secret,
+    identity: { id: 'host', name: 'host', capabilities: [] }, transport,
+    accessPermissionLevel: 'trusted', accessExpiresAt: null,
+    store: { async load(value) { return value; }, async save() {} },
+  });
+  client.state = defaultState(client.identity);
+  const originalNow = Date.now;
+  try {
+    Date.now = () => originalNow() + 6 * 60 * 1000;
+    await client.message({ text: 'still available' });
+    assert.equal(sent.length, 1);
+  } finally { Date.now = originalNow; }
+});
+
 test('JSON state storage writes a private atomic JSON document', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-collab-'));
   const path = join(dir, 'state.json'); const store = new JsonStore(path);

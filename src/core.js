@@ -113,9 +113,11 @@ export function applyEnvelope(state, envelope) {
 }
 
 export class FederationClient {
-  constructor({ relayUrl, roomId, secret, identity, store, transport = null, privilegedApproverIds = [], WebSocketImpl = globalThis.WebSocket, onChange = () => {}, onActivation = async () => {} }) {
+  constructor({ relayUrl, roomId, secret, identity, store, transport = null, accessPermissionLevel = 'trusted', accessExpiresAt = null, privilegedApproverIds = [], WebSocketImpl = globalThis.WebSocket, onChange = () => {}, onActivation = async () => {} }) {
     if (!transport && !WebSocketImpl) throw new Error('WebSocket is unavailable in this Node runtime');
     this.relayUrl = relayUrl; this.roomId = roomId; this.secret = secret; this.identity = identity; this.transport = transport;
+    this.accessPermissionLevel = accessPermissionLevel;
+    this.accessExpiresAt = accessExpiresAt;
     this.privilegedApproverIds = new Set(privilegedApproverIds);
     this.store = store; this.WebSocketImpl = WebSocketImpl; this.onChange = onChange; this.onActivation = onActivation;
     this.state = null; this.socket = null; this.reconnectTimer = null; this.closed = false;
@@ -142,6 +144,7 @@ export class FederationClient {
   async deliverActivation(activationId) {
     const activation = this.state.activations[activationId];
     if (!activation || activation.target !== this.identity.id || !['activated', 'approved'].includes(activation.status)) return false;
+    if (this.accessExpiresAt !== null && Date.now() >= this.accessExpiresAt) return false;
     if (activation.deliveryStatus === 'starting' || activation.deliveryStatus === 'started') return false;
     activation.deliveryStatus = 'starting'; activation.deliveryStartedAt = Date.now();
     await this.persist();
@@ -163,7 +166,13 @@ export class FederationClient {
     socket.addEventListener('error', () => { try { socket.close(); } catch {} });
   }
   scheduleReconnect() { if (!this.closed && !this.reconnectTimer) this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect(); }, 2000); }
+  ensureAccess(kind) {
+    if (this.accessExpiresAt !== null && Date.now() >= this.accessExpiresAt) throw new Error('COLLABORATION_ACCESS_EXPIRED');
+    if (kind === 'task' && this.accessPermissionLevel === 'communication') throw new Error('COLLABORATION_PERMISSION_DENIED');
+    if (kind === 'activation' && !['wake-approval', 'trusted'].includes(this.accessPermissionLevel)) throw new Error('COLLABORATION_PERMISSION_DENIED');
+  }
   publish(kind, body) {
+    this.ensureAccess(kind);
     if (this.transport) {
       if (!this.transport.isOpen()) { const error = new Error('DIRECT_CHANNEL_NOT_OPEN'); error.code = 'DIRECT_CHANNEL_NOT_OPEN'; throw error; }
     } else if (this.socket?.readyState !== this.WebSocketImpl.OPEN) {

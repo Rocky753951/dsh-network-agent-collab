@@ -143,7 +143,7 @@ export function apply(ctx, config = {}) {
     client?.close();
     const configured = setupState.status();
     const dynamicIdentity = { id: configured.identity.id, name: configured.identity.name, capabilities: config.capabilities || ['chat', 'tasks', 'activation'], networkScope: configured.setup.network, lanTransport: configured.setup.lanTransport || 'local', publicRole: configured.setup.role };
-    client = new FederationClient({ relayUrl: pairing.endpoint, transport: pairing.endpoint.startsWith('direct://') ? directPeer : null, roomId: pairing.roomId, secret: pairing.secret, identity: dynamicIdentity, store: new JsonStore(dataPath(stateDir, pairing.roomId)), privilegedApproverIds: config.privilegedApproverIds || [], onActivation: deliverActivation });
+    client = new FederationClient({ relayUrl: pairing.endpoint, transport: pairing.endpoint.startsWith('direct://') ? directPeer : null, roomId: pairing.roomId, secret: pairing.secret, identity: dynamicIdentity, accessPermissionLevel: configured.group?.permissionLevel || 'trusted', accessExpiresAt: configured.setup?.role === 'client' ? (configured.group?.expiresAt ?? null) : null, store: new JsonStore(dataPath(stateDir, pairing.roomId)), privilegedApproverIds: config.privilegedApproverIds || [], onActivation: deliverActivation });
     ready = client.start();
     await ready;
     return client;
@@ -269,6 +269,9 @@ export function apply(ctx, config = {}) {
         if (setupState.status().setup?.role !== 'host' || !directPeer) throw new Error('DIRECT_HOST_NOT_READY');
         if (!args.answer || typeof args.clientId !== 'string') throw new Error('DIRECT_ANSWER_INVALID');
         directPeer.acceptAnswer(args.answer);
+         const deadline = Date.now() + 15_000;
+         while (!directPeer.isOpen() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+         if (!directPeer.isOpen()) throw new Error('DIRECT_CHANNEL_NOT_OPEN');
         const request = await setupState.receiveJoinRequest({ request: { id: args.requestId || randomUUID(), inviteId: args.inviteId, clientId: args.clientId, clientName: args.clientName || args.clientId, createdAt: Date.now(), invitation: args.invitation, code: args.code } });
         return { ...request, connected: true };
       },
@@ -304,7 +307,7 @@ export function apply(ctx, config = {}) {
         if (role === 'client') { const result = await setupState.acceptJoinGrant(args); await startPairedClient(); return result; }
         throw new Error('SETUP_ROLE_REQUIRED');
       },
-      async membersRemove(args = {}) { await setupReady; return setupState.removeMember(args); },
+      async membersRemove(args = {}) { await setupReady; const result = await setupState.removeMember(args); if (client) await startPairedClient(); return result; },
       async snapshot() {
         await restoreReady;
         const localSetup = setupState.status();
