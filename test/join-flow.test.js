@@ -32,6 +32,23 @@ test('client receives room material only after host approval and client confirma
   await assert.rejects(() => host.receiveJoinRequest({ request: prepared.request, now: 1_000_004 }), /PAIRING_INVITE_ALREADY_USED/);
 });
 
+test('host member removal is visible in status and rotates the room secret', async () => {
+  const host = await state('Host-remove'); const client = await state('Client-remove');
+  await host.configure({ network: 'lan', lanTransport: 'local', role: 'host' });
+  const created = await host.createHost({ transport: 'local', endpoint: 'ws://host.local:8787', now: 2_000_000, ttlMs: 60_000 });
+  await client.configure({ network: 'lan', lanTransport: 'local', role: 'client' });
+  const prepared = await client.requestJoin({ invitation: encodePairingInvite(created.invite), code: created.pairingCode, now: 2_000_001 });
+  await host.receiveJoinRequest({ request: prepared.request, now: 2_000_002 });
+  const pending = host.status().pendingRequests[0];
+  const approved = await host.decideJoin({ requestId: pending.id, decision: 'approved', now: 2_000_003 });
+  const previousSecret = host.pairing().secret;
+  assert.equal(host.status().members[0].id, client.status().identity.id);
+  const status = await host.removeMember({ memberId: client.status().identity.id });
+  assert.equal(status.members.length, 0);
+  assert.notEqual(host.pairing().secret, previousSecret);
+  assert.notEqual(host.pairing().secret, approved.grant.secret);
+});
+
 test('once grants remain valid until confirmation and are consumed once', async () => {
   const host = await state('Host-once'); const client = await state('Client-once');
   const now = Date.now();
