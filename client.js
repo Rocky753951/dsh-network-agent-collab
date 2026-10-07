@@ -94,12 +94,14 @@ window.__ModuleLoader__.load({
       const savedSetup = state?.setup?.setup;
       // React state is ephemeral; keep the persisted setup as the source of truth after refresh.
       const selectedNetwork = network || savedSetup?.network;
-      const paired = Boolean(state?.setup?.group || state?.onboarding?.ready);
+      const reconnectRequired = state?.onboarding?.stage === 'public-reconnect-required';
+       const paired = !reconnectRequired && Boolean(state?.setup?.group || state?.onboarding?.ready);
       const stageText = {
         'setup-required': '请选择网络与本机身份。',
         'waiting-for-host': '尚未创建或加入协作组。',
         'relay-connecting': '正在连接本机 Relay。',
         'public-waiting-for-signal': '等待手工交换 Offer、Answer 和 Grant；公网模式不使用 Relay。',
+         'public-reconnect-required': 'DSH 已重启；请粘贴新的 Host 邀请和匹配码，重新申请加入。',
         'public-waiting-for-peer': '直连信令已交换，正在等待对方建立 DataChannel。',
         'waiting-for-peer': '协作组已启动，正在等待其他设备加入。',
         matched: '节点已匹配，可以开始协作。',
@@ -118,6 +120,7 @@ window.__ModuleLoader__.load({
          await refresh(); return result;
       });
       const recreatePublicHost = () => { if (window.confirm('重新生成 Host 会使旧公网邀请与未完成连接失效。确认继续吗？')) return createHost(); };
+       const recreateLanHost = () => { if (window.confirm('重新创建协作组将清空成员、待审批请求、旧邀请并轮换协作密钥；现有成员需重新配对。确认继续吗？')) return createHost(); };
        const requestJoin = () => run(async () => {
         const payload = await openJoinLink(joinLink, pairCode.trim());
          setInvite(payload.invitation);
@@ -174,7 +177,7 @@ window.__ModuleLoader__.load({
       }
 
       if (savedSetup?.role === 'host' && !state?.setup?.group) return e('main', { className: 'nac-page nac-wizard' }, errorNotice, e('header', { className: 'nac-header' }, e('h1', null, '创建协作组')), e(Card, { title: '启动本机 Host' }, e('p', null, selectedNetwork === 'public' ? 'Host 将生成加密连接链接；请与 Client 分享链接和六位匹配码。' : '插件会启动内置 Relay 并生成一次性邀请。'), e(Button, { disabled: busy, onClick: createHost }, '发布 Host 并生成配对码')), e(BackButton, { onClick: leave, danger: true }, '退出协作'));
-      if (savedSetup?.role === 'host' && activeInvite && (!paired || peers.length === 0)) return e('main', { className: 'nac-page nac-wizard' }, errorNotice, e('header', { className: 'nac-header' }, e('h1', null, '邀请 Client 加入')), e(Card, { title: '一次性配对信息' }, e('div', { className: 'nac-pair-code' }, e('span', null, '六位配对码'), e('strong', null, activeInvite.pairingCode || '—'), e('small', null, `有效至：${time(activeInvite.expiresAt)}`)), e(CodeBlock, { title: '连接链接（发送给 Client）', value: hostJoinLink }), e('p', null, '请把连接链接和六位匹配码发送给 Client。Client 申请后将在此审批。'), selectedNetwork === 'public' && e('label', { className: 'nac-field' }, e('span', null, 'Client 返回的连接信息'), e('textarea', { 'aria-label': 'Client 返回的连接信息', placeholder: '粘贴 Client 生成的申请包', value: hostDirectAnswer, onChange: (event) => setHostDirectAnswer(event.target.value) })), selectedNetwork === 'public' && hostDirectAnswer && e(Button, { disabled: busy, onClick: () => run(async () => { const packet = JSON.parse(hostDirectAnswer); await call('/direct/answer', { answer: packet.answer, ...packet.request }); await refresh(); }) }, '确认对方连接'), e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: selectedNetwork === 'public' ? recreatePublicHost : createHost }, selectedNetwork === 'public' ? '重新生成 Host（旧公网会话失效）' : '重新生成配对码'), e(Button, { disabled: busy, onClick: refresh }, '刷新状态'))), directGrant && e(Card, { title: '发送审批 Grant' }, e(CodeBlock, { title: 'Grant JSON（复制给 Client）', value: directGrant })), pendingJoinRequests.length > 0 && e(Card, { title: '待审批加入申请' }, pendingJoinRequests.map((req) => e('div', { key: req.id, className: 'nac-request' }, e('div', null, e('strong', null, req.clientName || req.clientId), e('small', null, req.clientId)), approvalFields, e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'approved') }, '同意加入'), e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'rejected') }, '拒绝'))))), e(BackButton, { onClick: leave, danger: true }, '退出协作'));
+      if (savedSetup?.role === 'host' && activeInvite && (!paired || peers.length === 0)) return e('main', { className: 'nac-page nac-wizard' }, errorNotice, e('header', { className: 'nac-header' }, e('h1', null, '邀请 Client 加入')), e(Card, { title: '一次性配对信息' }, e('div', { className: 'nac-pair-code' }, e('span', null, '六位配对码'), e('strong', null, activeInvite.pairingCode || '—'), e('small', null, `有效至：${time(activeInvite.expiresAt)}`)), e(CodeBlock, { title: '连接链接（发送给 Client）', value: hostJoinLink }), e('p', null, '请把连接链接和六位匹配码发送给 Client。Client 申请后将在此审批。'), selectedNetwork === 'public' && e('label', { className: 'nac-field' }, e('span', null, 'Client 返回的连接信息'), e('textarea', { 'aria-label': 'Client 返回的连接信息', placeholder: '粘贴 Client 生成的申请包', value: hostDirectAnswer, onChange: (event) => setHostDirectAnswer(event.target.value) })), selectedNetwork === 'public' && hostDirectAnswer && e(Button, { disabled: busy, onClick: () => run(async () => { const packet = JSON.parse(hostDirectAnswer); await call('/direct/answer', { answer: packet.answer, ...packet.request }); await refresh(); }) }, '确认对方连接'), e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: selectedNetwork === 'public' ? recreatePublicHost : recreateLanHost }, selectedNetwork === 'public' ? '重新生成 Host（旧公网会话失效）' : '重新生成配对码'), e(Button, { disabled: busy, onClick: refresh }, '刷新状态'))), directGrant && e(Card, { title: '发送审批 Grant' }, e(CodeBlock, { title: 'Grant JSON（复制给 Client）', value: directGrant })), pendingJoinRequests.length > 0 && e(Card, { title: '待审批加入申请' }, pendingJoinRequests.map((req) => e('div', { key: req.id, className: 'nac-request' }, e('div', null, e('strong', null, req.clientName || req.clientId), e('small', null, req.clientId)), approvalFields, e('div', { className: 'nac-choice-row' }, e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'approved') }, '同意加入'), e(Button, { disabled: busy, onClick: () => decideJoin(req.id, 'rejected') }, '拒绝'))))), e(BackButton, { onClick: leave, danger: true }, '退出协作'));
       if (savedSetup?.role === 'client' && !paired) return e('main', { className: 'nac-page nac-wizard' }, errorNotice, e('header', { className: 'nac-header' }, e('h1', null, '加入协作组')), e(Card, { title: '粘贴 Host 连接链接' }, e('label', { className: 'nac-field' }, e('span', null, 'Host 连接链接'), e('textarea', { 'aria-label': 'Host 连接链接', placeholder: '粘贴 Host 提供的连接链接', value: joinLink, onChange: (event) => setJoinLink(event.target.value) })),  e('label', { className: 'nac-field' }, e('span', null, '六位配对码'), e('input', { inputMode: 'numeric', maxLength: 6, 'aria-label': '六位配对码', placeholder: '输入六位配对码', value: pairCode, onChange: (event) => setPairCode(event.target.value.replace(/\D/g, '').slice(0, 6)) })), e(Button, { disabled: busy || !joinLink.trim() || pairCode.length !== 6, onClick: requestJoin }, selectedNetwork === 'public' ? '生成申请包' : '申请加入'), selectedNetwork === 'public' && directPackage && e(CodeBlock, { title: '申请包（复制给 Host）', value: directPackage }), selectedNetwork === 'public' && e('label', { className: 'nac-field' }, e('span', null, 'Host 审批后的 Grant JSON'), e('textarea', { 'aria-label': 'Host 审批后的 Grant JSON', placeholder: '粘贴 Host 审批后的 Grant JSON', value: clientGrant, onChange: (event) => setClientGrant(event.target.value) })), selectedNetwork === 'public' && clientGrant && e(Button, { disabled: busy, onClick: acceptDirectGrant }, '确认 Grant 并接入'), joinStatus && e('p', null, '申请包已生成；请发送给 Host，审批后粘贴 Grant。')), e(BackButton, { onClick: leave, danger: true }, '退出协作'));
 
       return e('main', { className: 'nac-page nac-dashboard' },
@@ -189,7 +192,7 @@ window.__ModuleLoader__.load({
           )
         ),
         error && e('div', { className: 'nac-alert', role: 'alert' }, error),
-        savedSetup?.role === 'host' && savedSetup?.network === 'public' && (!activeInvite || error.includes('原公网 WebRTC 会话无法恢复')) && e(Card, { title: '需要重新建立公网 Host' }, e('p', null, activeInvite ? '已有协作状态仍保留，但旧 WebRTC 会话已失效。' : '当前邀请已过期或不可用；请生成新的 Host 连接信息。'), e(Button, { disabled: busy, onClick: recreatePublicHost }, '重新生成 Host（旧公网会话失效）')),
+        savedSetup?.role === 'host' && savedSetup?.network === 'public' && (!activeInvite || error.includes('原公网 WebRTC 会话无法恢复') || state?.onboarding?.stage === 'public-reconnect-required') && e(Card, { title: '需要重新建立公网 Host' }, e('p', null, activeInvite ? '已有协作状态仍保留，但旧 WebRTC 会话已失效。' : '当前邀请已过期或不可用；请生成新的 Host 连接信息。'), e(Button, { disabled: busy, onClick: recreatePublicHost }, '重新生成 Host（旧公网会话失效）')),
         e(ConnectionStatus, { connected: paired && state?.transportReady, message: stageText[state?.onboarding?.stage] || state?.message }),
         savedSetup?.role === 'host' && activeInvite && e(Card, { title: 'Host 邀请与待审批设备' },
           e('p', null, `当前配对码：${activeInvite.pairingCode}（有效至 ${time(activeInvite.expiresAt)}）`),
@@ -204,7 +207,7 @@ window.__ModuleLoader__.load({
             ))
           ) : e('p', null, '暂无新设备申请。若需添加新设备，请将上方配对码提供给对方。'),
           e('div', { className: 'nac-choice-row', style: { marginTop: '8px' } },
-            e(Button, { disabled: busy, onClick: savedSetup?.network === 'public' ? recreatePublicHost : createHost }, savedSetup?.network === 'public' ? '重新生成公网 Host' : '重新生成新邀请码')
+            e(Button, { disabled: busy, onClick: savedSetup?.network === 'public' ? recreatePublicHost : recreateLanHost }, savedSetup?.network === 'public' ? '重新生成公网 Host' : '重新生成新邀请码')
           )
         ),
         e('section', { className: 'nac-stats' },

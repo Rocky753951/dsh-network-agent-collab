@@ -69,6 +69,34 @@ test('host access remains valid after invitation TTL expires', async () => {
   } finally { Date.now = originalNow; }
 });
 
+test('wake-approval cannot downgrade activation to immediate execution', async () => {
+  const sent = [];
+  const transport = { isOpen: () => true, send(value) { sent.push(JSON.parse(value)); }, setMessageHandler() {} };
+  const client = new FederationClient({
+    relayUrl: 'direct://manual', roomId: 'alpha', secret: base.secret,
+    identity: { id: 'sender', name: 'sender', capabilities: [] }, transport,
+    accessPermissionLevel: 'wake-approval', store: { async load(value) { return value; }, async save() {} },
+  });
+  client.state = defaultState(client.identity);
+  await client.activate({ target: 'receiver', title: 'Work', approvalLevel: 'none' });
+  assert.equal(sent[0].body.approvalLevel, 'peer');
+});
+
+test('paired ACL rejects forged and expired senders before state application', async () => {
+  let receive;
+  const transport = { isOpen: () => true, send() {}, setMessageHandler(handler) { receive = handler; } };
+  const client = new FederationClient({
+    relayUrl: 'direct://manual', roomId: 'alpha', secret: base.secret,
+    identity: { id: 'local', name: 'local', capabilities: [] }, transport,
+    allowedPeerIds: ['host'], peerExpiresAt: { host: Date.now() - 1 },
+    store: { async load(value) { return value; }, async save() {} },
+  });
+  await client.start();
+  const forged = createEnvelope({ roomId: 'alpha', sender: 'host', secret: base.secret, kind: 'message', body: { text: 'stale' } });
+  await receive(JSON.stringify(forged));
+  assert.equal(client.state.messages.length, 0);
+});
+
 test('JSON state storage writes a private atomic JSON document', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-collab-'));
   const path = join(dir, 'state.json'); const store = new JsonStore(path);

@@ -14,6 +14,10 @@ import { createUiHandler } from './src/ui-server.js';
 const asText = (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }];
 const jsonOutput = { schema: {}, render: asText };
 
+export function needsPublicReconnect(pairing, directPeer) {
+  return pairing?.endpoint === 'direct://manual' && !directPeer;
+}
+
 export function ensureLocalSharedSecret(stateDir) {
   const path = join(stateDir, 'shared-secret');
   let existing = false;
@@ -87,6 +91,7 @@ export function apply(ctx, config = {}) {
   let pendingGrant = null;
   let directPeer = null;
   let directOffer = null;
+  let publicReconnectRequired = false;
   // Stable by default on one machine; users may override when several DSH instances share a hostname.
   const configuredAgentId = config.agentId;
   const agentId = configuredAgentId && !configuredAgentId.startsWith('CHANGE_ME')
@@ -143,7 +148,15 @@ export function apply(ctx, config = {}) {
     client?.close();
     const configured = setupState.status();
     const dynamicIdentity = { id: configured.identity.id, name: configured.identity.name, capabilities: config.capabilities || ['chat', 'tasks', 'activation'], networkScope: configured.setup.network, lanTransport: configured.setup.lanTransport || 'local', publicRole: configured.setup.role };
-    client = new FederationClient({ relayUrl: pairing.endpoint, transport: pairing.endpoint.startsWith('direct://') ? directPeer : null, roomId: pairing.roomId, secret: pairing.secret, identity: dynamicIdentity, accessPermissionLevel: configured.group?.permissionLevel || 'trusted', accessExpiresAt: configured.setup?.role === 'client' ? (configured.group?.expiresAt ?? null) : null, store: new JsonStore(dataPath(stateDir, pairing.roomId)), privilegedApproverIds: config.privilegedApproverIds || [], onActivation: deliverActivation });
+    const memberIds = (configured.members || []).map((member) => member.id);
+    const allowedPeerIds = configured.setup.role === 'host'
+      ? [configured.identity.id, ...memberIds]
+      : [configured.identity.id, configured.group?.hostId].filter(Boolean);
+    const peerExpiresAt = Object.fromEntries((configured.members || []).map((member) => [member.id, member.expiresAt]));
+    if (configured.setup.role === 'client' && configured.group?.hostId) peerExpiresAt[configured.group.hostId] = configured.group.expiresAt;
+    const peerPermissionLevels = Object.fromEntries((configured.members || []).map((member) => [member.id, member.permissionLevel]));
+    if (configured.group?.hostId) peerPermissionLevels[configured.group.hostId] = 'trusted';
+    client = new FederationClient({ relayUrl: pairing.endpoint, transport: pairing.endpoint.startsWith('direct://') ? directPeer : null, roomId: pairing.roomId, secret: pairing.secret, identity: dynamicIdentity, accessPermissionLevel: configured.group?.permissionLevel || 'trusted', accessExpiresAt: configured.setup?.role === 'client' ? (configured.group?.expiresAt ?? null) : null, allowedPeerIds, peerExpiresAt, peerPermissionLevels, store: new JsonStore(dataPath(stateDir, pairing.roomId)), privilegedApproverIds: config.privilegedApproverIds || [], onActivation: deliverActivation });
     ready = client.start();
     await ready;
     return client;
@@ -171,6 +184,12 @@ export function apply(ctx, config = {}) {
     const pairing = setupState.pairing();
     const configured = setupState.status();
     if (!client && pairing) {
+      // WebRTC objects are process-local. Never construct a WebSocket for the
+      // direct://manual sentinel after restart; require explicit re-pairing.
+      if (needsPublicReconnect(pairing, directPeer)) {
+        publicReconnectRequired = true;
+        return null;
+      }
       // A persisted Host owns its embedded ws:// relay too. Rebind its original
       // port when possible so previously issued LAN invitations remain usable.
       if (configured.setup?.role === 'host') {
@@ -320,10 +339,10 @@ export function apply(ctx, config = {}) {
         if (!client) {
           const stage = !localSetup.configured
             ? 'setup-required'
-            : currentPublicRole === 'host' ? 'host-not-created' : 'awaiting-invitation';
+            : publicReconnectRequired ? 'public-reconnect-required' : currentPublicRole === 'host' ? 'host-not-created' : 'awaiting-invitation';
           const message = !localSetup.configured
             ? '请选择网络与 Host/Client 身份。'
-            : currentPublicRole === 'host' ? '已选择 Host；请创建协作组并生成配对码。' : '已选择 Client；请粘贴 Host 邀请并完成配对。';
+            : publicReconnectRequired ? 'DSH 已重启；公网直连会话不可恢复，请重新建立公网连接。' : currentPublicRole === 'host' ? '已选择 Host；请创建协作组并生成配对码。' : '已选择 Client；请粘贴 Host 邀请并完成配对。';
           return { mode, identity: currentIdentity, setup: localSetup, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole, tailscale, transportReady: false, peers: {}, messages: [], tasks: {}, activations: {}, approvals: {}, onboarding: { stage, ready: false, matchedPeers: 0 }, message };
         }
         const federationClient = await requireLan();
@@ -360,7 +379,7 @@ export function apply(ctx, config = {}) {
           const currentIdentity = localSetup.configured ? { ...identity, id: localSetup.identity.id, name: localSetup.identity.name, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole } : identity;
           if (mode === 'internet') return { mode, identity: currentIdentity, transportReady: false, message: 'Tailscale scaffold only; no Internet collaboration transport.' };
           if (!client) {
-            const stage = !localSetup.configured ? 'setup-required' : currentPublicRole === 'host' ? 'host-not-created' : 'awaiting-invitation';
+            const stage = !localSetup.configured ? 'setup-required' : publicReconnectRequired ? 'public-reconnect-required' : currentPublicRole === 'host' ? 'host-not-created' : 'awaiting-invitation';
             return { mode, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole, identity: currentIdentity, transportReady: false, configured: localSetup.configured, missing: localSetup.configured ? ['pairing'] : ['setup'], onboarding: { stage, ready: false }, message: !localSetup.configured ? 'Select network and Host/Client identity.' : currentPublicRole === 'host' ? 'Create a host group to start collaboration.' : 'Join a Host invitation to start collaboration.' };
           }
           const federation = await requireLan();

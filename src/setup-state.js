@@ -33,6 +33,7 @@ function redactGroup(group) {
     name: group.name,
     transport: group.transport,
     endpoint: group.endpoint,
+    hostId: group.hostId,
     createdAt: group.createdAt,
     expiresAt: group.expiresAt,
     permissionLevel: group.permissionLevel,
@@ -108,7 +109,7 @@ export class SetupState {
     const secret = randomBytes(32).toString('base64url');
     const roomId = randomUUID();
     const invite = createPairingInvite({ identity: this.identity, endpoint, now, ttlMs });
-    const group = { id: roomId, name: this.state.setup.groupName || this.identity.name, transport, endpoint, secret, createdAt: now, expiresAt: now + ttlMs, invites: { [invite.id]: invite } };
+    const group = { id: roomId, name: this.state.setup.groupName || this.identity.name, hostId: this.identity.id, transport, endpoint, secret, createdAt: now, expiresAt: now + ttlMs, invites: { [invite.id]: invite } };
     this.state.group = group;
     this.state.pendingRequests = {}; this.state.usedInviteIds = []; this.state.members = {};
     await this.persist();
@@ -152,11 +153,13 @@ export class SetupState {
     if (!ACCESS_LEVELS.has(permissionLevel)) throw new Error('PAIRING_PERMISSION_INVALID');
     const request = this.state.pendingRequests?.[requestId];
     if (!request) throw new Error('PAIRING_REQUEST_NOT_FOUND');
+    const invite = this.state.group.invites?.[request.inviteId];
+    if (decision === 'approved') {
+      if (!invite || this.state.usedInviteIds.includes(invite.id) || invite.expiresAt <= now) throw new Error('PAIRING_INVITE_UNAVAILABLE');
+      if (Object.keys(this.state.members || {}).length > 0) throw new Error('PAIRING_AGENT_ALREADY_MATCHED');
+    }
     delete this.state.pendingRequests[requestId];
     if (decision === 'rejected') { await this.persist(); return { decision, requestId }; }
-    const invite = this.state.group.invites?.[request.inviteId];
-    if (!invite || this.state.usedInviteIds.includes(invite.id) || invite.expiresAt <= now) throw new Error('PAIRING_INVITE_UNAVAILABLE');
-    if (Object.keys(this.state.members || {}).length > 0) throw new Error('PAIRING_AGENT_ALREADY_MATCHED');
     this.state.usedInviteIds.push(invite.id);
     const expiresAt = grantExpiry(duration, now);
     this.state.members[request.clientId] = { id: request.clientId, name: request.clientName, approvedAt: now, duration, permissionLevel, expiresAt };

@@ -113,11 +113,16 @@ export function applyEnvelope(state, envelope) {
 }
 
 export class FederationClient {
-  constructor({ relayUrl, roomId, secret, identity, store, transport = null, accessPermissionLevel = 'trusted', accessExpiresAt = null, privilegedApproverIds = [], WebSocketImpl = globalThis.WebSocket, onChange = () => {}, onActivation = async () => {} }) {
+  constructor({ relayUrl, roomId, secret, identity, store, transport = null, accessPermissionLevel = 'trusted', accessExpiresAt = null, allowedPeerIds = null, peerExpiresAt = {}, peerPermissionLevels = {}, privilegedApproverIds = [], WebSocketImpl = globalThis.WebSocket, onChange = () => {}, onActivation = async () => {} }) {
     if (!transport && !WebSocketImpl) throw new Error('WebSocket is unavailable in this Node runtime');
     this.relayUrl = relayUrl; this.roomId = roomId; this.secret = secret; this.identity = identity; this.transport = transport;
     this.accessPermissionLevel = accessPermissionLevel;
     this.accessExpiresAt = accessExpiresAt;
+    // A room HMAC authenticates possession of the room secret, not the sender
+    // identity. Pairing supplies this explicit peer ACL to prevent sender spoofing.
+    this.allowedPeerIds = allowedPeerIds ? new Set(allowedPeerIds) : null;
+    this.peerExpiresAt = { ...peerExpiresAt };
+    this.peerPermissionLevels = { ...peerPermissionLevels };
     this.privilegedApproverIds = new Set(privilegedApproverIds);
     this.store = store; this.WebSocketImpl = WebSocketImpl; this.onChange = onChange; this.onActivation = onActivation;
     this.state = null; this.socket = null; this.reconnectTimer = null; this.closed = false;
@@ -132,8 +137,15 @@ export class FederationClient {
     try {
       const envelope = JSON.parse(typeof raw === 'string' ? raw : Buffer.from(raw).toString('utf8'));
       if (envelope.roomId !== this.roomId || envelope.sender === this.identity.id) return;
+      if (this.allowedPeerIds && !this.allowedPeerIds.has(envelope.sender)) return;
+      const peerExpiry = this.peerExpiresAt[envelope.sender];
+      if (peerExpiry !== undefined && peerExpiry !== null && Date.now() >= peerExpiry) return;
       if ((envelope.kind === 'activation' || envelope.kind === 'message') && envelope.body?.to && envelope.body.to !== 'all' && envelope.body.to !== this.identity.id) return;
       if (envelope.kind === 'activation' && envelope.body?.target && envelope.body.target !== 'all' && envelope.body.target !== this.identity.id) return;
+      // A non-trusted paired member may request a peer-approved activation only.
+      if (envelope.kind === 'activation' && envelope.body?.approvalLevel === 'none'
+        && Object.prototype.hasOwnProperty.call(this.peerPermissionLevels, envelope.sender)
+        && this.peerPermissionLevels[envelope.sender] !== 'trusted') return;
       if (!validateEnvelope(envelope, this.secret) && applyEnvelope(this.state, envelope)) {
         await this.persist();
         if (envelope.kind === 'activation') await this.deliverActivation(envelope.body.id);
@@ -193,7 +205,9 @@ export class FederationClient {
     applyEnvelope(this.state, envelope); await this.persist(); return envelope.id;
   }
   async activate({ target, title, detail = '', approvalLevel = 'peer' }) {
-    const request = { id: randomUUID(), target, title, detail, approvalLevel, status: approvalLevel === 'none' ? 'activated' : 'pending' };
+    // wake-approval members cannot downgrade a request to immediate activation.
+    const effectiveApproval = this.accessPermissionLevel === 'wake-approval' && approvalLevel === 'none' ? 'peer' : approvalLevel;
+    const request = { id: randomUUID(), target, title, detail, approvalLevel: effectiveApproval, status: effectiveApproval === 'none' ? 'activated' : 'pending' };
     const envelope = this.publish('activation', request);
     applyEnvelope(this.state, envelope); await this.persist(); return request.id;
   }

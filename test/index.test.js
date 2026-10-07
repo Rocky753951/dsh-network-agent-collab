@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { createEnvelope } from '../src/core.js';
-import { apply, ensureLocalSharedSecret } from '../index.js';
+import { apply, ensureLocalSharedSecret, needsPublicReconnect } from '../index.js';
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -58,6 +58,12 @@ test('inbound approved activation creates a local agent and submits its prompt',
   } finally {
     dispose?.(); globalThis.WebSocket = originalWebSocket;
   }
+});
+
+test('public direct pairing requires explicit re-pair after restart', () => {
+  assert.equal(needsPublicReconnect({ endpoint: 'direct://manual' }, null), true);
+  assert.equal(needsPublicReconnect({ endpoint: 'direct://manual' }, { isOpen() { return false; } }), false);
+  assert.equal(needsPublicReconnect({ endpoint: 'ws://127.0.0.1:8787' }, null), false);
 });
 
 test('plugin starts LAN setup without manual secrets and rejects invalid explicit secrets', () => {
