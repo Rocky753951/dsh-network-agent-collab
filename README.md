@@ -50,6 +50,12 @@ Host 仍需具备可用的 IPv4 入站条件（公网地址、端口转发或可
 
 旧配置 `mode: internet` 仍保留兼容性，但不再推荐；请使用上面的 `networkScope`。
 
+### 可选：公共 Relay 信令
+
+在需要跨公网配对且无法手工传递 Offer/Answer 时，可选择无需注册的 Nostr 公共 Relay。公共 Relay 只转发短期、端到端加密的配对信令，协作数据仍走已建立的 DataChannel；Relay 仍可能看到 IP、时间、大小和路由元数据，且可能限流、维护或随时下线。默认不自动启用、注册或发布。接收端校验会话、角色、序号、nonce 与 TTL，复制密文换 event ID 也会被拒绝；只有 Relay 返回 `OK=true` 才报告发布成功，超时/关闭/全失败均回退手工流程。
+
+候选节点、NIP-11 探测、失败切换、隐私边界、手工信令与自托管选项见 [`docs/PUBLIC_RELAY.md`](docs/PUBLIC_RELAY.md)。公共节点全部失败时，应明确切换到手工信令、局域网/Tailscale 或用户配置的自托管 Relay，不应静默改用未展示的服务。
+
 ## 安装与首次连接
 
 在插件目录执行：

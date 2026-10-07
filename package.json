@@ -10,6 +10,7 @@
     "./core": "./src/core.js",
     "./onboarding": "./src/onboarding.js",
     "./direct-peer": "./src/direct-peer.js",
+    "./nostr-signal": "./src/nostr-signal.js",
     "./client": "./client.js"
   },
   "scripts": {
