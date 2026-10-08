@@ -23,7 +23,7 @@ async function saveJson(path, value) {
 }
 
 function defaultState() {
-  return { version: VERSION, setup: null, group: null, pendingRequests: {}, pendingJoin: null, usedInviteIds: [], members: {} };
+  return { version: VERSION, setup: null, group: null, pendingRequests: {}, rejectedRequestIds: [], pendingJoin: null, usedInviteIds: [], members: {} };
 }
 
 function redactGroup(group) {
@@ -96,7 +96,7 @@ export class SetupState {
     if (network === 'public' && lanTransport !== undefined) throw new Error('SETUP_PUBLIC_LAN_TRANSPORT_FORBIDDEN');
     if (groupName !== undefined && (typeof groupName !== 'string' || !groupName.trim() || groupName.length > 80)) throw new Error('SETUP_GROUP_NAME_INVALID');
     this.state.setup = Object.freeze({ network, role, ...(network === 'lan' ? { lanTransport: lanTransport || 'local' } : {}), ...(groupName ? { groupName: groupName.trim() } : {}) });
-    this.state.group = null; this.state.pendingRequests = {}; this.state.pendingJoin = null; this.state.usedInviteIds = []; this.state.members = {};
+    this.state.group = null; this.state.pendingRequests = {}; this.state.rejectedRequestIds = []; this.state.pendingJoin = null; this.state.usedInviteIds = []; this.state.members = {};
     await this.persist();
     return this.status();
   }
@@ -137,6 +137,7 @@ export class SetupState {
     const mismatch = verifyPairingCode(invite, request.code, now);
     if (mismatch) throw new Error(`PAIRING_REQUEST_REJECTED: ${mismatch}`);
     if (this.state.usedInviteIds.includes(invite.id)) throw new Error('PAIRING_INVITE_ALREADY_USED');
+    if (request.id && this.state.rejectedRequestIds?.includes(request.id)) throw new Error('PAIRING_REQUEST_ALREADY_REJECTED');
     if (Object.values(this.state.members || {}).some((member) => member.id === request.clientId)) throw new Error('PAIRING_AGENT_ALREADY_MATCHED');
     if (Object.values(this.state.pendingRequests || {}).some((pending) => pending.clientId === request.clientId)) throw new Error('PAIRING_REQUEST_ALREADY_PENDING');
     const pending = { id: request.id || randomUUID(), inviteId: invite.id, clientId: request.clientId, clientName: typeof request.clientName === 'string' ? request.clientName.slice(0, 80) : request.clientId, createdAt: now };
@@ -159,7 +160,7 @@ export class SetupState {
       if (Object.keys(this.state.members || {}).length > 0) throw new Error('PAIRING_AGENT_ALREADY_MATCHED');
     }
     delete this.state.pendingRequests[requestId];
-    if (decision === 'rejected') { await this.persist(); return { decision, requestId }; }
+    if (decision === 'rejected') { this.state.rejectedRequestIds = [...new Set([...(this.state.rejectedRequestIds || []), requestId])].slice(-1000); await this.persist(); return { decision, requestId }; }
     this.state.usedInviteIds.push(invite.id);
     const expiresAt = grantExpiry(duration, now);
     this.state.members[request.clientId] = { id: request.clientId, name: request.clientName, approvedAt: now, duration, permissionLevel, expiresAt };

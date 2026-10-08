@@ -99,6 +99,8 @@ export function apply(ctx, config = {}) {
   let directPeer = null;
   let directOffer = null;
   let publicReconnectRequired = false;
+  let signalError = null;
+  const reportSignalError = (error) => { signalError = error instanceof Error ? error.message : String(error || 'PAIRING_SIGNAL_FAILED'); };
   // Stable by default on one machine; users may override when several DSH instances share a hostname.
   const configuredAgentId = config.agentId;
   const agentId = configuredAgentId && !configuredAgentId.startsWith('CHANGE_ME')
@@ -171,14 +173,14 @@ export function apply(ctx, config = {}) {
   const startHostSignal = async (invite) => {
     if (!invite || invite.endpoint === 'direct://manual') return;
     await hostSignal?.close?.();
-    hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, signEvent: nostrSignEvent, relays: nostrRelays, onRequest: async (request) => {
+    hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, signEvent: nostrSignEvent, relays: nostrRelays, timeoutMs: config.pairingTimeoutMs, onError: reportSignalError, onRequest: async (request) => {
       await setupState.receiveJoinRequest({ request });
     }});
   };
   const startClientSignal = async (request, invite) => {
     if (!invite || invite.endpoint === 'direct://manual') return;
     await clientSignal?.close?.();
-    clientSignal = await startClientPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, request, signEvent: nostrSignEvent, relays: nostrRelays, onGrant: async (grant) => {
+    clientSignal = await startClientPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, request, signEvent: nostrSignEvent, relays: nostrRelays, timeoutMs: config.pairingTimeoutMs, onError: reportSignalError, onGrant: async (grant) => {
       pendingGrant = grant;
       await setupState.acceptJoinGrant({ grant });
       await startPairedClient();
@@ -407,7 +409,7 @@ export function apply(ctx, config = {}) {
           if (mode === 'internet') return { mode, identity: currentIdentity, transportReady: false, message: 'Tailscale scaffold only; no Internet collaboration transport.' };
           if (!client) {
             const stage = !localSetup.configured ? 'setup-required' : publicReconnectRequired ? 'public-reconnect-required' : currentPublicRole === 'host' ? 'host-not-created' : 'awaiting-invitation';
-            return { mode, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole, identity: currentIdentity, transportReady: false, configured: localSetup.configured, missing: localSetup.configured ? ['pairing'] : ['setup'], onboarding: { stage, ready: false }, message: !localSetup.configured ? 'Select network and Host/Client identity.' : currentPublicRole === 'host' ? 'Create a host group to start collaboration.' : 'Join a Host invitation to start collaboration.' };
+            return { mode, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole, identity: currentIdentity, transportReady: false, configured: localSetup.configured, missing: localSetup.configured ? ['pairing'] : ['setup'], onboarding: { stage, ready: false }, message: signalError || (!localSetup.configured ? 'Select network and Host/Client identity.' : currentPublicRole === 'host' ? 'Create a host group to start collaboration.' : 'Join a Host invitation to start collaboration.') };
           }
           const federation = await requireLan();
           return { mode, networkScope: currentNetworkScope, lanTransport: currentLanTransport, publicRole: currentPublicRole, identity: currentIdentity, transportReady: federation.isConnected(), ...(federation.snapshot()) };

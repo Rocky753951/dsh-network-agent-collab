@@ -15,15 +15,31 @@ function encode(roomId, kind, body) {
 function parse(data, roomId) {
   try { const raw = Buffer.isBuffer(data) ? data.toString('utf8') : String(data); if (Buffer.byteLength(raw) > MAX_SIGNAL_BYTES) return null; const value = JSON.parse(raw); return value && value.roomId === roomId && typeof value.kind === 'string' && value.body && typeof value.body === 'object' ? value : null; } catch { return null; }
 }
-function openSocket(endpoint, WebSocketImpl) { return new Promise((resolve, reject) => { const socket = new WebSocketImpl(endpoint); const fail = (error) => reject(error instanceof Error ? error : new Error('PAIRING_SIGNAL_CONNECT_FAILED')); socket.once('open', () => resolve(socket)); socket.once('error', fail); }); }
+function openSocket(endpoint, WebSocketImpl, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer;
+    const socket = new WebSocketImpl(endpoint);
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) { try { socket.close(); } catch {} reject(error instanceof Error ? error : new Error('PAIRING_SIGNAL_CONNECT_FAILED')); }
+      else resolve(socket);
+    };
+    timer = setTimeout(() => finish(new Error('PAIRING_SIGNAL_CONNECT_TIMEOUT')), timeoutMs);
+    socket.once('open', () => finish());
+    socket.once('error', (error) => finish(error));
+  });
+}
 
 /** Nostr control-plane pairing. The pairing code derives an ephemeral mailbox key. */
-export async function startNostrPairingSignal({ endpoint, inviteId, code, role, request, onRequest, onGrant, signEvent, relays, sessionTtlMs, WebSocketImpl = WebSocket } = {}) {
+export async function startNostrPairingSignal({ endpoint, inviteId, code, role, request, onRequest, onGrant, onError, signEvent, relays, timeoutMs = 8000, sessionTtlMs, WebSocketImpl = WebSocket } = {}) {
   if (typeof code !== 'string' || !code) throw new Error('PAIRING_SIGNAL_CODE_REQUIRED');
   if (typeof signEvent !== 'function') throw new Error('NOSTR_SIGNAL_SIGNER_REQUIRED');
   const sessionKey = createHash('sha256').update(`dsh-pair-code:${inviteId}:${code}`).digest();
   const configuredRelays = relays?.length ? relays : (endpoint?.replace(/^nostr:\/\//, '').split(',').filter(Boolean));
-  const signal = await startNostrSignal({ inviteId, sessionKey, role, signEvent, relays: configuredRelays?.length ? configuredRelays : DEFAULT_NOSTR_RELAYS, ...(sessionTtlMs === undefined ? {} : { sessionTtlMs }), WebSocketImpl,
+  const signal = await startNostrSignal({ inviteId, sessionKey, role, signEvent, relays: configuredRelays?.length ? configuredRelays : DEFAULT_NOSTR_RELAYS, timeoutMs, ...(sessionTtlMs === undefined ? {} : { sessionTtlMs }), WebSocketImpl, onError,
     onSignal: async (signalBody) => {
       if (role === 'host' && signalBody?.kind === 'join-request') await onRequest?.(signalBody.body);
       if (role === 'client' && signalBody?.kind === 'join-grant') await onGrant?.(signalBody.body);
@@ -32,19 +48,22 @@ export async function startNostrPairingSignal({ endpoint, inviteId, code, role, 
   return { roomId: pairingRoom(inviteId), sendGrant: async (grant) => signal.publish({ kind: 'join-grant', body: grant }), sendRequest: async (value) => signal.publish({ kind: 'join-request', body: value }), close: signal.close };
 }
 
-export async function startHostPairingSignal({ endpoint, inviteId, code, onRequest, signEvent, relays, WebSocketImpl = WebSocket }) {
-  if (endpoint?.startsWith('nostr://')) return startNostrPairingSignal({ endpoint, inviteId, code, role: 'host', onRequest, signEvent, relays, WebSocketImpl });
+export async function startHostPairingSignal({ endpoint, inviteId, code, onRequest, onError, signEvent, relays, timeoutMs = 8000, WebSocketImpl = WebSocket }) {
+  if (endpoint?.startsWith('nostr://')) return startNostrPairingSignal({ endpoint, inviteId, code, role: 'host', onRequest, onError, signEvent, relays, timeoutMs, WebSocketImpl });
   if (typeof onRequest !== 'function') throw new Error('PAIRING_SIGNAL_HANDLER_REQUIRED');
-  const roomId = pairingRoom(inviteId); const socket = await openSocket(endpoint, WebSocketImpl); socket.send(encode(roomId, 'host-ready', { at: Date.now() }));
-  socket.on('message', async (data) => { const message = parse(data, roomId); if (!message || message.kind !== 'join-request') return; try { await onRequest(message.body); } catch {} });
+  const roomId = pairingRoom(inviteId); const socket = await openSocket(endpoint, WebSocketImpl, timeoutMs);
+  // Install the handler before advertising readiness. A fast LAN client can send
+  // its request immediately after receiving host-ready.
+  socket.on('message', async (data) => { const message = parse(data, roomId); if (!message || message.kind !== 'join-request') return; try { await onRequest(message.body); } catch (error) { onError?.(error); } });
+  socket.send(encode(roomId, 'host-ready', { at: Date.now() }));
   return { roomId, async sendGrant(grant) { if (socket.readyState !== WebSocketImpl.OPEN) throw new Error('PAIRING_SIGNAL_UNAVAILABLE'); socket.send(encode(roomId, 'join-grant', grant)); }, close: () => new Promise((resolve) => { try { socket.once('close', resolve); socket.close(); } catch { resolve(); } }) };
 }
 
-export async function startClientPairingSignal({ endpoint, inviteId, code, request, onGrant, signEvent, relays, WebSocketImpl = WebSocket }) {
-  if (endpoint?.startsWith('nostr://')) return startNostrPairingSignal({ endpoint, inviteId, code, role: 'client', request, onGrant, signEvent, relays, WebSocketImpl });
+export async function startClientPairingSignal({ endpoint, inviteId, code, request, onGrant, onError, signEvent, relays, timeoutMs = 8000, WebSocketImpl = WebSocket }) {
+  if (endpoint?.startsWith('nostr://')) return startNostrPairingSignal({ endpoint, inviteId, code, role: 'client', request, onGrant, onError, signEvent, relays, timeoutMs, WebSocketImpl });
   if (!request || typeof request !== 'object' || typeof onGrant !== 'function') throw new Error('PAIRING_SIGNAL_REQUEST_REQUIRED');
-  const roomId = pairingRoom(inviteId); const socket = await openSocket(endpoint, WebSocketImpl);
-  socket.on('message', async (data) => { const message = parse(data, roomId); if (!message || message.kind !== 'join-grant') return; try { await onGrant(message.body); } catch {} });
+  const roomId = pairingRoom(inviteId); const socket = await openSocket(endpoint, WebSocketImpl, timeoutMs);
+  socket.on('message', async (data) => { const message = parse(data, roomId); if (!message || message.kind !== 'join-grant') return; try { await onGrant(message.body); } catch (error) { onError?.(error); } });
   socket.send(encode(roomId, 'join-request', request));
   return { roomId, close: () => new Promise((resolve) => { try { socket.once('close', resolve); socket.close(); } catch { resolve(); } }) };
 }
