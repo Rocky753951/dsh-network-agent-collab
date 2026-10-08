@@ -65,6 +65,7 @@ function unsignedGrant(grant) {
     duration: grant.duration,
     permissionLevel: grant.permissionLevel,
     expiresAt: grant.expiresAt,
+    ...(grant.directOffer ? { directOffer: grant.directOffer } : {}),
   };
 }
 

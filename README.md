@@ -44,7 +44,7 @@ Tailscale 是局域网的子选项，不是独立的公网模式。
 
 ### 公网 Host/Client
 
-公网模式不要求第三方 Relay、V2Ray 或 IPv6。公网直连实验实现使用 WebRTC ICE/DataChannel：STUN 只发现 IPv4 地址，Host/Client 通过复制粘贴 Offer/Answer 完成手动信令，协作数据在打洞成功后直连传输。
+公网模式不要求第三方 Relay、V2Ray 或 IPv6。公网直连实验实现使用 WebRTC ICE/DataChannel：普通 Host/Client 流程通过加密配对信令自动交换申请、审批 Grant、Offer/Answer 和连接状态；Grant 不通过复制粘贴传递。
 
 Host 仍需具备可用的 IPv4 入站条件（公网地址、端口转发或可用的 UPnP）。对称 NAT、CGNAT 或 UDP 被封锁时会明确报告直连失败，不回退到付费中继。
 
@@ -52,7 +52,7 @@ Host 仍需具备可用的 IPv4 入站条件（公网地址、端口转发或可
 
 ### 公共 Relay/Nostr
 
-可通过插件配置启用自动公网配对（UI 仍保留手工高级入口）：
+可通过插件配置启用自动公网配对（默认流程不提供手工 Grant 入口）：
 
 ```yaml
 networkScope: public
@@ -79,13 +79,13 @@ dsh plugin --profile web add ./
 2. 创建者点击“生成邀请和配对码”，用页面的“复制”按钮复制配对码并把链接和配对码发给对方；加入者粘贴链接、输入配对码后点击“申请加入”；
 3. 创建者点击“允许加入”，双方连接后即可开始协作。
 
-公网 P2P、Tailscale、手工信令、权限时长和调试信息收在“更多连接方式/高级设置”中；仅在主动选择或局域网连接失败时使用。普通流程不要求理解 Relay、Offer/Answer、Grant 等协议术语。
+公网 P2P、Tailscale、手工信令、权限时长和调试信息收在“更多连接方式/高级设置”中；普通流程只需邀请链接与六位配对码。页面会显示 connecting、request-sent、awaiting-approval、grant-received、transport-connecting、connected，以及失败、拒绝和过期状态。
 
 ### 高级与权限说明
 
 创建者会在页面实时显示加入申请，可选择：单次/24 小时/永久，以及仅通信/可唤醒 Agent（需审批）/无条件信任。每个 Agent 只允许匹配一次。连接链接使用 PBKDF2-SHA-256 + AES-256-GCM 封装邀请和公网 Offer；六位匹配码不写入链接。配对密钥只在 Host 批准后通过信令发送，状态和日志不会展示密钥。
 
-公网 P2P 不使用第三方 Relay，也不启动公网 WebSocket mailbox。实际流程完全依赖手工复制信令包：Host 生成 Offer 和邀请信息；Client 粘贴后生成 Answer 与加入申请包；Host 粘贴 Answer/申请包并审批后生成 Grant；Client 粘贴 Grant，双方再由 WebRTC DataChannel 直连。STUN 仅用于 IPv4 ICE 候选发现，不是中继服务。若双方都在严格 NAT、CGNAT 或 UDP 被封锁环境，直连会失败，此时应使用局域网或 Tailscale。
+公网 P2P 的流程不要求手工 Grant JSON：Host 生成邀请，Client 输入链接和配对码后自动申请，Host 审批后 Grant（含签名绑定的 Offer/Answer/ICE）通过配对信令回传并建立 DataChannel。`direct://manual` 仅保留底层 Offer/Answer 调试，不支持手工 Grant API；自动信令不可用时请改用局域网或 Tailscale。
 ## 启动局域网 Relay
 
 在局域网中一台可访问的机器上：

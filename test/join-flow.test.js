@@ -3,7 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { encodePairingInvite } from '../src/onboarding.js';
+import { encodePairingInvite, signPairingGrant } from '../src/onboarding.js';
 import { SetupState } from '../src/setup-state.js';
 
 async function state(label) {
@@ -76,6 +76,10 @@ test('client rejects forged or tampered host grants', async () => {
     const forged = { ...approved.grant, [field]: field === 'secret' ? 'A'.repeat(43) : `forged-${field}` };
     await assert.rejects(() => client.acceptJoinGrant({ grant: forged }), /PAIRING_GRANT_INVALID/);
   }
+  // The final WebRTC offer is part of the signed Grant; changing its SDP invalidates the signature.
+  const signedOfferGrant = { ...approved.grant, directOffer: { type: 'offer', sdp: 'v=0\\r\\n' } };
+  signedOfferGrant.signature = signPairingGrant(signedOfferGrant, host.identity);
+  await assert.rejects(() => client.acceptJoinGrant({ grant: { ...signedOfferGrant, directOffer: { ...signedOfferGrant.directOffer, sdp: 'v=0\\r\\nmalicious' } } }), /PAIRING_GRANT_INVALID/);
   // An attacker who knows every invitation field still cannot produce an Ed25519 signature.
   await assert.rejects(() => client.acceptJoinGrant({ grant: { ...approved.grant, signature: Buffer.alloc(64, 7).toString('base64url') } }), /PAIRING_GRANT_INVALID/);
 });

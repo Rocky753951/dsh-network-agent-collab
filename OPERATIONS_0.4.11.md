@@ -14,16 +14,16 @@
 
 高级方式包括 Tailscale、公网直连和手工连接信息；只有主动打开「更多连接方式」时才显示。技术排障与公网手工步骤见下文。
 
-## 公网 P2P：当前仅支持高级手工连接
+## 公网 P2P：配置 Nostr 时自动配对
 
-当前 UI 没有公共 Relay/Nostr 自动入口，也不会自动探测或切换公共节点。公网 P2P 需主动打开高级连接方式并按下方手工连接步骤操作；公共 Relay 相关内容仅供未来实现/代码接口参考，详见 `docs/PUBLIC_RELAY.md`。
+配置了 Nostr signer 和可用 Relay 时，公网配对通过端到端加密控制信令自动完成；UI 不提供手工 Grant JSON 流程。未配置自动信令时，才可使用显式高级 `direct://manual` Offer/Answer fallback；该 fallback 不提供 TURN 或 NAT 穿透。
 
-### 手工交换三份信令
+### 自动交换配对信令（公网）
 
-1. Host 点「发布 Host 并生成配对码」，将「连接链接」及单独六位配对码给 Client。链接在加密邀请内包含完成 ICE 收集后的 **Offer**，页面还会显示有效期。切勿仅发送原始 Offer 而遗漏邀请或配对码。
-2. Client 粘贴链接及配对码，点「生成申请包」；将页面的**完整「申请包」JSON**复制给 Host，包含 Answer 和加入申请。Host 把它粘贴到「Client 返回的连接信息」，点「确认对方连接」。该动作等待 DataChannel 打开，最多约 **15 秒**；成功后才出现待审批申请，失败时先诊断网络，不要直接把失败当作已获准。
-3. Host 在「待审批加入申请」核对 Client ID，选择权限和时长，点「允许加入」。从「发送审批 Grant」区复制**完整 Grant JSON**交给 Client；拒绝则不会有 Grant。Client 将其贴入「Host 审批后的 Grant JSON」，点「确认 Grant 并接入」。最后双方核对「已连接」和在线节点。Grant 包含协作密钥，按机密数据传递，不在公开渠道转贴。
-4. **顺序必须是：Host 链接/码 → Client 申请包 → Host 确认连接并审批 → Host Grant → Client 确认 Grant**。每次重新生成 Host 都使旧公网 Offer、未完成的连接与邀请失效；DSH 进程重启后 WebRTC 会话不能恢复，若页面提示 `PUBLIC_HOST_RECREATE_REQUIRED`，需确认后点「重新生成 Host」并从头交换。此操作可能清空原 Host 的成员和待审批状态，先与另一端协调。
+1. Host 点「发布 Host 并生成配对码」，将连接链接及单独六位配对码给 Client。公网 Nostr 仅作为端到端加密控制信令。
+2. Client 粘贴链接及配对码，点「申请加入」；申请通过 Nostr 自动发送，页面显示 request-sent/awaiting-approval 状态。
+3. Host 在待审批列表核对 Client ID，选择权限和时长并点「允许加入」。Grant、签名绑定的 WebRTC Offer/SDP/ICE 以及 Answer 通过加密信令自动交换，双方随后显示已连接。
+4. 默认流程不复制 Grant JSON，也不提供 `/direct/grant`。每次重新生成 Host 都使旧邀请失效；DSH 重启后 WebRTC 会话不能恢复，若页面提示 `PUBLIC_HOST_RECREATE_REQUIRED`，需重新生成 Host 并从头申请。
 
 ## 权限、Agent 唤醒和撤销
 
@@ -40,10 +40,10 @@
 | 没看到左栏「协作中心」或页面报「无法读取协作状态」 | 核实实际运行的 DSH 已加载兼容的 Host/Client 插件且 Agent Loop 可用；确认现有 DSH Web 服务在本机工作。页面请求的是**现有 Web Server** 的 `/network-agent-collab` 前缀，而不是独立监听的 8788 服务。源码目前只使用 `ui.enabled` 开关，**`ui.port` 不决定页面路由**；旧 README 中关于修改 8788 的说法不适用于当前源码。 |
 | 链接/匹配码不正确、过期、邀请已被使用 | 从 Host 复制完整链接及单独的六位码；检查两端时钟及有效期，必要时 Host 重新生成邀请并让 Client 从头操作，不能复用旧的申请或 Grant。 |
 | LAN 显示 `relay-connecting`、`RELAY_UNAVAILABLE` | 检查 Host DSH/内置 Relay 正在运行、邀请的主机地址可达、主机/本机防火墙及所示端口；Tailscale 还检查双方在线和 ACL。不要把“已点击发送”当成对端已收到。 |
-| 公网显示 `public-waiting-for-signal`、`DIRECT_CHANNEL_NOT_OPEN` | 先按三份信令的顺序与完整 JSON 核对；再确认 STUN 可达、IPv4/UDP、Host 入站映射与 NAT 类型。两端都在 CGNAT 或对称 NAT 下时**无 TURN 兜底**，改用 Tailscale/可互访局域网。 |
+| 公网显示 `public-waiting-for-signal`、`DIRECT_CHANNEL_NOT_OPEN` | 检查 Nostr Relay 可达、STUN、IPv4/UDP、Host 入站映射与 NAT 类型。两端都在 CGNAT 或对称 NAT 下时**无 TURN 兜底**，改用 Tailscale/可互访局域网。 |
 | 传输显示已连接但找不到节点 | 等待双方上线宣布 presence，点「刷新」核对「在线节点」；连接与真正匹配是两项不同状态。 |
 | `COLLABORATION_PERMISSION_DENIED` / `COLLABORATION_ACCESS_EXPIRED` / `PRIVILEGED_APPROVER_NOT_CONFIGURED` | 分别检查加入时权限等级、24 小时授权时间、目标机本地 `privilegedApproverIds` 配置；不要用多点几次审批代替修正配置。 |
-| 公网 Host 重启后原邀请打不开 | WebRTC 内存会话无法重建；按页面确认「重新生成 Host」，与 Client 交换全新的链接/申请包/Grant。 |
+| 公网 Host 重启后原邀请打不开 | WebRTC 内存会话无法重建；按页面确认「重新生成 Host」，让 Client 重新申请。 |
 
 ### 已知验证边界与源码差异
 

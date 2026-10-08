@@ -4,7 +4,7 @@ import { chmodSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'no
 import { join } from 'node:path';
 import { FederationClient, JsonStore, dataPath } from './src/core.js';
 import { SetupState } from './src/setup-state.js';
-import { decodePairingInvite, encodePairingInvite } from './src/onboarding.js';
+import { decodePairingInvite, encodePairingInvite, signPairingGrant } from './src/onboarding.js';
 import { startClientPairingSignal, startHostPairingSignal } from './src/pairing-signal.js';
 import { createEphemeralNostrSignEvent } from './src/nostr-identity.js';
 import { DirectPeer } from './src/direct-peer.js';
@@ -165,23 +165,46 @@ export function apply(ctx, config = {}) {
     if (configured.setup.role === 'client' && configured.group?.hostId) peerExpiresAt[configured.group.hostId] = configured.group.expiresAt;
     const peerPermissionLevels = Object.fromEntries((configured.members || []).map((member) => [member.id, member.permissionLevel]));
     if (configured.group?.hostId) peerPermissionLevels[configured.group.hostId] = 'trusted';
-    client = new FederationClient({ relayUrl: pairing.endpoint, transport: pairing.endpoint.startsWith('direct://') ? directPeer : null, roomId: pairing.roomId, secret: pairing.secret, identity: dynamicIdentity, accessPermissionLevel: configured.group?.permissionLevel || 'trusted', accessExpiresAt: configured.setup?.role === 'client' ? (configured.group?.expiresAt ?? null) : null, allowedPeerIds, peerExpiresAt, peerPermissionLevels, store: new JsonStore(dataPath(stateDir, pairing.roomId)), privilegedApproverIds: config.privilegedApproverIds || [], onActivation: deliverActivation });
+    client = new FederationClient({ relayUrl: pairing.endpoint, transport: directPeer || null, roomId: pairing.roomId, secret: pairing.secret, identity: dynamicIdentity, accessPermissionLevel: configured.group?.permissionLevel || 'trusted', accessExpiresAt: configured.setup?.role === 'client' ? (configured.group?.expiresAt ?? null) : null, allowedPeerIds, peerExpiresAt, peerPermissionLevels, store: new JsonStore(dataPath(stateDir, pairing.roomId)), privilegedApproverIds: config.privilegedApproverIds || [], onActivation: deliverActivation });
     ready = client.start();
     await ready;
     return client;
   };
+  const ensureHostDirect = async () => {
+    if (!directPeer) directPeer = new DirectPeer({ role: 'host', onState: reportSignalError });
+    if (!directOffer) directOffer = await directPeer.createOffer();
+    return directOffer;
+  };
   const startHostSignal = async (invite) => {
     if (!invite || invite.endpoint === 'direct://manual') return;
     await hostSignal?.close?.();
-    hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, signEvent: nostrSignEvent, relays: nostrRelays, timeoutMs: config.pairingTimeoutMs, onError: reportSignalError, onRequest: async (request) => {
+    hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, signEvent: nostrSignEvent, relays: nostrRelays, timeoutMs: config.pairingTimeoutMs, onError: reportSignalError, onSignal: async (kind, body) => {
+      if (kind === 'direct-answer' && directPeer) directPeer.acceptAnswer(body);
+    }, onRequest: async (request) => {
       await setupState.receiveJoinRequest({ request });
     }});
+    const sendGrant = hostSignal.sendGrant.bind(hostSignal);
+    hostSignal.sendGrant = async (grant) => {
+      if (!invite.endpoint?.startsWith('nostr://')) return sendGrant(grant);
+      const offer = await ensureHostDirect();
+      await startPairedClient();
+      const finalGrant = { ...grant, directOffer: offer };
+      finalGrant.signature = signPairingGrant(finalGrant, setupState.identity);
+      return sendGrant(finalGrant);
+    };
   };
   const startClientSignal = async (request, invite) => {
     if (!invite || invite.endpoint === 'direct://manual') return;
     await clientSignal?.close?.();
     clientSignal = await startClientPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, request, signEvent: nostrSignEvent, relays: nostrRelays, timeoutMs: config.pairingTimeoutMs, onError: reportSignalError, onGrant: async (grant) => {
       pendingGrant = grant;
+      if (invite.endpoint?.startsWith('nostr://')) {
+        if (!grant?.directOffer) throw new Error('PAIRING_DATA_OFFER_MISSING');
+        directPeer?.close();
+        directPeer = new DirectPeer({ role: 'client' });
+        const answer = await directPeer.acceptOffer(grant.directOffer);
+        await clientSignal?.sendSignal?.('direct-answer', answer);
+      }
       await setupState.acceptJoinGrant({ grant });
       await startPairedClient();
     }});
@@ -323,13 +346,6 @@ export function apply(ctx, config = {}) {
         const request = await setupState.receiveJoinRequest({ request: { id: args.requestId || randomUUID(), inviteId: args.inviteId, clientId: args.clientId, clientName: args.clientName || args.clientId, createdAt: Date.now(), invitation: args.invitation, code: args.code } });
         return { ...request, connected: true };
       },
-      async directGrant(args = {}) {
-        await setupReady;
-        if (setupState.status().setup?.role !== 'client' || !directPeer) throw new Error('DIRECT_CLIENT_NOT_READY');
-        const result = await setupState.acceptJoinGrant({ grant: args.grant });
-        await startPairedClient();
-        return result;
-      },
       async joinRequest(args = {}) {
         await setupReady;
         const role = setupState.status().setup?.role;
@@ -349,7 +365,6 @@ export function apply(ctx, config = {}) {
         if (role === 'host') {
           const result = await setupState.decideJoin(args);
           if (result.grant && hostSignal) await hostSignal.sendGrant(result.grant);
-          if (result.grant && directPeer) return { ...result, grant: undefined, directGrant: result.grant };
           return { ...result, grant: result.grant ? { requestId: result.grant.requestId, approved: true } : undefined };
         }
         if (role === 'client') { const result = await setupState.acceptJoinGrant(args); await startPairedClient(); return result; }

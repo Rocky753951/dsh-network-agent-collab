@@ -25,6 +25,13 @@ test('join approval options are used in both wizard and dashboard paths', () => 
   assert.match(client, /duration, permissionLevel/);
 });
 
+test('automatic pairing exposes every connection stage without Grant JSON in default flow', () => {
+  for (const stage of ['connecting', 'request-sent', 'awaiting-approval', 'grant-received', 'transport-connecting', 'connected', 'error', 'expired']) assert.match(client, new RegExp(stage));
+  assert.match(client, /call\('\/join\/request', \{ invite: payload\.invitation, pairCode: pairCode\.trim\(\) \}\)/);
+  assert.doesNotMatch(client, /const manualPublic = selectedNetwork/);
+  assert.match(client, /高级手工 fallback：申请包/);
+});
+
 test('default onboarding uses plain-language connection actions', () => {
   assert.match(client, /开始协作（局域网）/);
   assert.match(client, /生成邀请和配对码/);
