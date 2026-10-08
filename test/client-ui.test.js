@@ -25,6 +25,20 @@ test('join approval options are used in both wizard and dashboard paths', () => 
   assert.match(client, /duration, permissionLevel/);
 });
 
+test('default onboarding uses plain-language connection actions', () => {
+  assert.match(client, /开始协作（局域网）/);
+  assert.match(client, /生成邀请和配对码/);
+  assert.match(client, /允许加入/);
+  assert.match(client, /粘贴邀请链接/);
+  assert.doesNotMatch(client, /同意加入|同意接入/);
+});
+
+test('dashboard permission controls stay behind advanced settings', () => {
+  assert.match(client, /高级设置/);
+  assert.ok((client.match(/advancedOpen && approvalFields/g) || []).length >= 2);
+  assert.match(client, /收起高级设置/);
+});
+
 const uiStyles = [...client.matchAll(/const extraStyle = '([^']*)'|style\.textContent = `([\s\S]*?)`|responsive\.textContent = '([^']*)'/g)]
   .map(([, singleQuoted, template, responsive]) => singleQuoted ?? template ?? responsive)
   .join('\n');
