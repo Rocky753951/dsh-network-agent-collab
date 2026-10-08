@@ -237,7 +237,7 @@ export function apply(ctx, config = {}) {
           directOffer = await directPeer.createOffer();
           const created = await setupState.createHost({ transport, endpoint: 'direct://manual' });
           await startPairedClient();
-          return { ...created.status, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, endpoint: 'direct://manual', directOffer, relay: { running: false } };
+          return { ...created.status, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, endpoint: 'direct://manual', directOffer, relay: { running: false }, publicMode: 'manual', automaticPairing: false, warning: '未配置公网信令/Relay；当前仅提供高级手工 WebRTC 交换，不提供自动发现、TURN 或 NAT 穿透。' };
         }
         if (!embeddedRelay) embeddedRelay = await createRelay({ port: Number.isSafeInteger(args.port) ? args.port : 0 });
         const tailscale = transport === 'tailscale' ? await tailscaleStatus() : null;
