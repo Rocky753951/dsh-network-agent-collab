@@ -50,11 +50,20 @@ Host 仍需具备可用的 IPv4 入站条件（公网地址、端口转发或可
 
 旧配置 `mode: internet` 仍保留兼容性，但不再推荐；请使用上面的 `networkScope`。
 
-### 公共 Relay/Nostr（代码接口，当前 UI 未提供）
+### 公共 Relay/Nostr
 
-当前协作中心没有自动公共 Relay/Nostr 入口，普通用户不能在页面选择或启用它；公网高级路径仍需手工交换连接信息。公共 Relay 相关能力仅作为未来/代码接口保留：设计上只转发短期、端到端加密的配对信息，协作数据仍走已建立的直连通道；Relay 可能看到 IP、时间、大小和路由元数据，且可能限流、维护或下线。
+可通过插件配置启用自动公网配对（UI 仍保留手工高级入口）：
 
-公共 Relay 的候选节点、NIP-11 探测和隐私边界记录见 [`docs/PUBLIC_RELAY.md`](docs/PUBLIC_RELAY.md)，仅供实现和诊断参考；当前 UI 不会自动切换或连接公共节点。
+```yaml
+networkScope: public
+publicRole: host # 或 client
+nostrRelays: [wss://relay.damus.io, wss://nos.lol]
+# nostrSignEvent: (可选；宿主注入的 Nostr 事件签名函数)
+```
+
+Host 创建邀请后监听申请；Client 提交申请；Host 通过 `joinDecide` 审批后 Grant 自动回传并由 Client 校验签名、一次性消费。未注入 `nostrSignEvent` 时，插件会为本次进程生成只存于内存的临时 Schnorr 密钥，不需要 Nostr 账号或钱包；插件停止时销毁该密钥。Nostr 仅转发短期端到端加密的控制面消息，协作数据仍走已建立的传输通道；Relay 可能看到 IP、时间、大小和路由元数据。若临时签名器初始化失败，才会安全降级为 `direct://manual`，不会静默降级或发送未加密申请。
+
+公共 Relay 的候选节点、NIP-11 探测和隐私边界记录见 [`docs/PUBLIC_RELAY.md`](docs/PUBLIC_RELAY.md)。
 
 ## 安装与首次连接
 

@@ -6,6 +6,7 @@ import { FederationClient, JsonStore, dataPath } from './src/core.js';
 import { SetupState } from './src/setup-state.js';
 import { decodePairingInvite, encodePairingInvite } from './src/onboarding.js';
 import { startClientPairingSignal, startHostPairingSignal } from './src/pairing-signal.js';
+import { createEphemeralNostrSignEvent } from './src/nostr-identity.js';
 import { DirectPeer } from './src/direct-peer.js';
 import { createRelay } from './relay.js';
 import { tailscaleStatus } from './src/tailscale.js';
@@ -71,6 +72,12 @@ export function apply(ctx, config = {}) {
   const networkScope = config.networkScope || 'lan';
   const lanTransport = config.lanTransport || 'local';
   const publicRole = config.publicRole || 'client';
+  // Public pairing gets a memory-only signer by default; callers may inject NIP-07 or another signer.
+  const ephemeralNostrSignEvent = networkScope === 'public' && !config.nostrSignEvent
+    ? createEphemeralNostrSignEvent()
+    : null;
+  const nostrSignEvent = config.nostrSignEvent || ephemeralNostrSignEvent;
+  const nostrRelays = Array.isArray(config.nostrRelays) ? config.nostrRelays : undefined;
   if (!['lan', 'public'].includes(networkScope)) throw new Error('network-agent-collab networkScope must be lan or public');
   if (networkScope === 'lan' && !['local', 'tailscale'].includes(lanTransport)) throw new Error('network-agent-collab lanTransport must be local or tailscale');
   if (networkScope === 'public' && !['host', 'client'].includes(publicRole)) throw new Error('network-agent-collab publicRole must be host or client');
@@ -164,14 +171,14 @@ export function apply(ctx, config = {}) {
   const startHostSignal = async (invite) => {
     if (!invite || invite.endpoint === 'direct://manual') return;
     await hostSignal?.close?.();
-    hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, onRequest: async (request) => {
+    hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, signEvent: nostrSignEvent, relays: nostrRelays, onRequest: async (request) => {
       await setupState.receiveJoinRequest({ request });
     }});
   };
   const startClientSignal = async (request, invite) => {
     if (!invite || invite.endpoint === 'direct://manual') return;
     await clientSignal?.close?.();
-    clientSignal = await startClientPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, request, onGrant: async (grant) => {
+    clientSignal = await startClientPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, request, signEvent: nostrSignEvent, relays: nostrRelays, onGrant: async (grant) => {
       pendingGrant = grant;
       await setupState.acceptJoinGrant({ grant });
       await startPairedClient();
@@ -231,6 +238,26 @@ export function apply(ctx, config = {}) {
         const status = setupState.status();
         if (!status.setup || status.setup.role !== 'host') throw new Error('SETUP_HOST_ROLE_REQUIRED');
         const transport = status.setup.network === 'lan' ? status.setup.lanTransport : 'public';
+        if (transport === 'public' && nostrSignEvent) {
+          const endpoint = typeof args.endpoint === 'string' && args.endpoint.startsWith('nostr://') ? args.endpoint : `nostr://${(nostrRelays || []).join(',')}`;
+          let created;
+          try {
+            created = await setupState.createHost({ transport, endpoint });
+            // Nostr is control-plane signaling only; do not start a data client
+            // until a verified grant has established the actual transport.
+            await startHostSignal(created.invite);
+          } catch (error) {
+            // Never leave a durable invite/group behind when every relay is down.
+            try { await hostSignal?.close?.(); } catch {} hostSignal = null;
+            client?.close(); client = null; ready = Promise.resolve(null);
+            await setupState.leave();
+            if (error?.message === 'NOSTR_SIGNAL_UNAVAILABLE' || /NOSTR_SIGNAL_UNAVAILABLE/.test(String(error?.message))) {
+              return { setupRequired: true, publicMode: 'manual', automaticPairing: false, endpoint: 'direct://manual', manualReconfigure: true, warning: '公共 Relay 不可用；未保存公网配对。请显式重新配置并使用 direct://manual 手工交换，系统不会发送未加密信令。' };
+            }
+            throw error;
+          }
+          return { ...created.status, invitation: encodePairingInvite(created.invite), pairingCode: created.pairingCode, expiresAt: created.invite.expiresAt, endpoint, relay: { running: false }, publicMode: 'nostr', automaticPairing: true };
+        }
         if (transport === 'public') {
           directPeer?.close();
           directPeer = new DirectPeer({ role: 'host' });
@@ -431,7 +458,7 @@ export function apply(ctx, config = {}) {
         async execute(args) { return { published: true, id: await (await requireLan()).task(args) }; },
       }),
     ];
-    return () => { client?.close(); hostSignal?.close?.(); clientSignal?.close?.(); embeddedRelay?.close(); fallbackUi?.close(); unregisterUi(); unregister.forEach((dispose) => dispose()); };
+    return () => { client?.close(); hostSignal?.close?.(); clientSignal?.close?.(); ephemeralNostrSignEvent?.close?.(); embeddedRelay?.close(); fallbackUi?.close(); unregisterUi(); unregister.forEach((dispose) => dispose()); };
   });
 }
 apply.inject = inject;
