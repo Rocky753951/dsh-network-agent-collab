@@ -8,9 +8,9 @@ https://github.com/Rocky753951/dsh-network-agent-collab
 
 ## 当前版本
 
-- 版本：0.4.11
-- 最新提交：见仓库 `git log -1`（本交接文档随发布提交同步）
-- 包文件：`dsh-network-agent-collab-0.4.11.tgz`
+- 版本：0.4.12
+- 最新提交：见仓库 `git log -1`（本交接文档随版本提交同步）
+- 包文件：`dsh-network-agent-collab-0.4.12.tgz`
 
 ## 已实现
 
@@ -20,11 +20,11 @@ https://github.com/Rocky753951/dsh-network-agent-collab
 - 审批时长：单次、24 小时、永久。
 - 权限等级：仅通信、唤醒 Agent 需审批、无条件信任。
 - Client 与 Host 的 Agent 一对一匹配限制。
-- 公网 IPv4 WebRTC DataChannel 直连基础：STUN、手动 Offer/Answer、Grant 确认；信令在 ICE gathering 完成后导出最终 SDP。
+- 公网配对默认走端到端加密 Nostr 控制信令；签名 Grant 绑定最终 WebRTC Offer，获批后通过 DataChannel 建立数据面。无须预先设置 `networkScope` 或手工 Grant JSON。公共 Relay/STUN 无法解决所有 NAT 类型；未配置 TURN。
 - LAN 未提供 `sharedSecret` 时自动生成并持久化受保护的本地 secret；无需手工配置即可启动。
-- 不依赖 V2Ray、IPv6、付费 Relay 或 TURN。
+- 自动配对使用内置免费公共 Nostr Relay；用户可选自定义 Relay。无 TURN 兜底，严格 NAT/CGNAT 网络可能无法直连。
 - 协作中心的人类操作路径整改：初始化错误可见、复制失败手动恢复、Host 成员移除确认、审批权限双路径一致。
-- 极简风格界面：沿用 DSH 主题变量以适配深浅主题，收紧操作台层级与间距，窄屏审批字段单列。真实浏览器视觉、交互与公网跨设备直连仍需现场验证。
+- 默认公网选择无需插件配置即可创建临时 Nostr signer；新增 LAN 静态配置下公网 Host 启动测试，真实浏览器视觉、公共 Relay 与跨设备/NAT 直连仍需现场验证。
 
 ## 验证
 
@@ -36,14 +36,14 @@ node --check client.js
 npm test
 ```
 
-当前测试为 41/41 通过（以 `npm test` 实际输出为准）。
+当前测试为 55/55 通过（以 `npm test` 实际输出为准）。
 
 ## 公网直连使用边界
 
-Host 生成 Offer；Client 粘贴 Offer 并生成申请包；Host 粘贴 Answer、审批后生成 Grant；Client 粘贴 Grant 完成接入。对称 NAT、CGNAT 或 UDP 被封锁时，WebRTC 直连可能失败，这是 IPv4 网络条件限制。
+公网默认自动流程：Host 创建配对码，Client 自动申请，Host 审批后 Grant/Offer/Answer 通过加密信令交换。只有 Relay 信令启动失败时才提示安全手工 fallback；对称 NAT、CGNAT 或 UDP 被封锁时，WebRTC 仍可能无法直连。
 
 ## 发布包
 
 ```text
-https://github.com/Rocky753951/dsh-network-agent-collab/raw/main/dsh-network-agent-collab-0.4.11.tgz
+https://github.com/Rocky753951/dsh-network-agent-collab/raw/v0.4.12/dsh-network-agent-collab-0.4.12.tgz
 ```
