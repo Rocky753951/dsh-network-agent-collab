@@ -52,16 +52,14 @@ Host 仍需具备可用的 IPv4 入站条件（公网地址、端口转发或可
 
 ### 公共 Relay/Nostr
 
-可通过插件配置启用自动公网配对（默认流程不提供手工 Grant 入口）：
+在协作中心选择公网 P2P 后，自动配对默认启用，无需先改插件配置（默认流程不提供手工 Grant 入口）。插件会使用内置的免费公共 Nostr Relay 列表；需要自选 Relay 时才添加覆盖配置：
 
 ```yaml
-networkScope: public
-publicRole: host # 或 client
 nostrRelays: [wss://relay.damus.io, wss://nos.lol]
 # nostrSignEvent: (可选；宿主注入的 Nostr 事件签名函数)
 ```
 
-Host 创建邀请后监听申请；Client 提交申请；Host 通过 `joinDecide` 审批后 Grant 自动回传并由 Client 校验签名、一次性消费。未注入 `nostrSignEvent` 时，插件会为本次进程生成只存于内存的临时 Schnorr 密钥，不需要 Nostr 账号或钱包；插件停止时销毁该密钥。Nostr 仅转发短期端到端加密的控制面消息，协作数据仍走已建立的传输通道；Relay 可能看到 IP、时间、大小和路由元数据。若临时签名器初始化失败，才会安全降级为 `direct://manual`，不会静默降级或发送未加密申请。
+Host 创建邀请后监听申请；Client 提交申请；Host 审批后 Grant 自动回传并由 Client 校验签名、一次性消费。未注入 `nostrSignEvent` 时，插件会为本次进程生成只存于内存的临时 Schnorr 密钥，不需要 Nostr 账号或钱包；插件停止时销毁该密钥。Nostr 仅转发短期端到端加密的控制面消息，协作数据仍走已建立的传输通道；Relay 可能看到 IP、时间、大小和路由元数据。
 
 公共 Relay 的候选节点、NIP-11 探测和隐私边界记录见 [`docs/PUBLIC_RELAY.md`](docs/PUBLIC_RELAY.md)。
 

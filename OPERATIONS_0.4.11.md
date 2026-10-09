@@ -14,9 +14,9 @@
 
 高级方式包括 Tailscale、公网直连和手工连接信息；只有主动打开「更多连接方式」时才显示。技术排障与公网手工步骤见下文。
 
-## 公网 P2P：配置 Nostr 时自动配对
+## 公网 P2P：默认自动配对
 
-配置了 Nostr signer 和可用 Relay 时，公网配对通过端到端加密控制信令自动完成；UI 不提供手工 Grant JSON 流程。未配置自动信令时，才可使用显式高级 `direct://manual` Offer/Answer fallback；该 fallback 不提供 TURN 或 NAT 穿透。
+在协作中心选择公网 P2P 后，插件会自动创建临时 Nostr signer 并连接内置免费 Relay 列表；无需用户预先配置 `networkScope`、Nostr 账号或 Relay。UI 不提供手工 Grant JSON 流程。只有自动信令初始化确实失败时，才会提示使用显式高级 `direct://manual` Offer/Answer fallback；该 fallback 不提供 TURN，严格 NAT 下仍可能无法直连。
 
 ### 自动交换配对信令（公网）
 

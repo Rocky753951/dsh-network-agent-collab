@@ -60,6 +60,12 @@ function defineTool({ parameters, output, execute, ...definition }) {
 
 export const inject = ['tools', 'agentLoop', 'webServer'];
 
+export function resolveNostrSignEvent(config = {}) {
+  return typeof config.nostrSignEvent === 'function'
+    ? config.nostrSignEvent
+    : createEphemeralNostrSignEvent();
+}
+
 /**
  * Dual-mode DSH collaboration host plugin.
  * lan: functioning signed WebSocket relay transport.
@@ -72,10 +78,11 @@ export function apply(ctx, config = {}) {
   const networkScope = config.networkScope || 'lan';
   const lanTransport = config.lanTransport || 'local';
   const publicRole = config.publicRole || 'client';
-  // Public pairing gets a memory-only signer by default; callers may inject NIP-07 or another signer.
-  const ephemeralNostrSignEvent = networkScope === 'public' && !config.nostrSignEvent
-    ? createEphemeralNostrSignEvent()
-    : null;
+  // Public pairing can be selected later in the UI, so do not gate its default
+  // memory-only signer on the static plugin networkScope setting.
+  const ephemeralNostrSignEvent = typeof config.nostrSignEvent === 'function'
+    ? null
+    : resolveNostrSignEvent(config);
   const nostrSignEvent = config.nostrSignEvent || ephemeralNostrSignEvent;
   const nostrRelays = Array.isArray(config.nostrRelays) ? config.nostrRelays : undefined;
   if (!['lan', 'public'].includes(networkScope)) throw new Error('network-agent-collab networkScope must be lan or public');

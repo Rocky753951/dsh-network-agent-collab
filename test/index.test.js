@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { createEnvelope } from '../src/core.js';
-import { apply, ensureLocalSharedSecret, needsPublicReconnect } from '../index.js';
+import { apply, ensureLocalSharedSecret, needsPublicReconnect, resolveNostrSignEvent } from '../index.js';
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -57,6 +57,18 @@ test('inbound approved activation creates a local agent and submits its prompt',
     assert.match(prompts[0].content[0].text, /Check the release/);
   } finally {
     dispose?.(); globalThis.WebSocket = originalWebSocket;
+  }
+});
+
+test('Nostr signer is available when UI selects public despite the plugin LAN default', async () => {
+  const signEvent = resolveNostrSignEvent({ networkScope: 'lan' });
+  try {
+    const signed = await signEvent({ kind: 20000, created_at: 1, tags: [], content: 'test' });
+    assert.match(signed.pubkey, /^[0-9a-f]{64}$/);
+    assert.match(signed.id, /^[0-9a-f]{64}$/);
+    assert.match(signed.sig, /^[0-9a-f]{128}$/);
+  } finally {
+    signEvent.close?.();
   }
 });
 
