@@ -78,16 +78,21 @@ export function apply(ctx, config = {}) {
   const networkScope = config.networkScope || 'lan';
   const lanTransport = config.lanTransport || 'local';
   const publicRole = config.publicRole || 'client';
-  // Public pairing can be selected later in the UI, so do not gate its default
-  // memory-only signer on the static plugin networkScope setting.
-  const ephemeralNostrSignEvent = typeof config.nostrSignEvent === 'function'
-    ? null
-    : resolveNostrSignEvent(config);
-  const nostrSignEvent = config.nostrSignEvent || ephemeralNostrSignEvent;
   const nostrRelays = Array.isArray(config.nostrRelays) ? config.nostrRelays : undefined;
   if (!['lan', 'public'].includes(networkScope)) throw new Error('network-agent-collab networkScope must be lan or public');
   if (networkScope === 'lan' && !['local', 'tailscale'].includes(lanTransport)) throw new Error('network-agent-collab lanTransport must be local or tailscale');
   if (networkScope === 'public' && !['host', 'client'].includes(publicRole)) throw new Error('network-agent-collab publicRole must be host or client');
+  // The UI can select public later, independently from static networkScope.
+  // Create the short-lived signer only when an automatic public flow starts.
+  let ephemeralNostrSignEvent = null;
+  let nostrSignEvent = typeof config.nostrSignEvent === 'function' ? config.nostrSignEvent : null;
+  const ensureNostrSignEvent = () => {
+    if (!nostrSignEvent) {
+      ephemeralNostrSignEvent = resolveNostrSignEvent(config);
+      nostrSignEvent = ephemeralNostrSignEvent;
+    }
+    return nostrSignEvent;
+  };
   const hasSharedSecret = config.sharedSecret !== undefined;
   const secretValid = typeof config.sharedSecret === 'string' && config.sharedSecret !== 'CHANGE_ME' && Buffer.byteLength(config.sharedSecret) >= 32;
   if (mode === 'lan' && hasSharedSecret && !secretValid) throw new Error('network-agent-collab LAN mode sharedSecret must be at least 32 bytes when provided');
@@ -185,7 +190,7 @@ export function apply(ctx, config = {}) {
   const startHostSignal = async (invite) => {
     if (!invite || invite.endpoint === 'direct://manual') return;
     await hostSignal?.close?.();
-    hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, signEvent: nostrSignEvent, relays: nostrRelays, timeoutMs: config.pairingTimeoutMs, onError: reportSignalError, onSignal: async (kind, body) => {
+    hostSignal = await startHostPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, signEvent: ensureNostrSignEvent(), relays: nostrRelays, timeoutMs: config.pairingTimeoutMs, onError: reportSignalError, onSignal: async (kind, body) => {
       if (kind === 'direct-answer' && directPeer) directPeer.acceptAnswer(body);
     }, onRequest: async (request) => {
       await setupState.receiveJoinRequest({ request });
@@ -203,7 +208,7 @@ export function apply(ctx, config = {}) {
   const startClientSignal = async (request, invite) => {
     if (!invite || invite.endpoint === 'direct://manual') return;
     await clientSignal?.close?.();
-    clientSignal = await startClientPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, request, signEvent: nostrSignEvent, relays: nostrRelays, timeoutMs: config.pairingTimeoutMs, onError: reportSignalError, onGrant: async (grant) => {
+    clientSignal = await startClientPairingSignal({ endpoint: invite.endpoint, inviteId: invite.id, code: invite.code, request, signEvent: ensureNostrSignEvent(), relays: nostrRelays, timeoutMs: config.pairingTimeoutMs, onError: reportSignalError, onGrant: async (grant) => {
       pendingGrant = grant;
       if (invite.endpoint?.startsWith('nostr://')) {
         if (!grant?.directOffer) throw new Error('PAIRING_DATA_OFFER_MISSING');
@@ -270,7 +275,7 @@ export function apply(ctx, config = {}) {
         const status = setupState.status();
         if (!status.setup || status.setup.role !== 'host') throw new Error('SETUP_HOST_ROLE_REQUIRED');
         const transport = status.setup.network === 'lan' ? status.setup.lanTransport : 'public';
-        if (transport === 'public' && nostrSignEvent) {
+        if (transport === 'public') {
           const endpoint = typeof args.endpoint === 'string' && args.endpoint.startsWith('nostr://') ? args.endpoint : `nostr://${(nostrRelays || []).join(',')}`;
           let created;
           try {

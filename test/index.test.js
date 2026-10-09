@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { schnorr } from '@noble/curves/secp256k1';
+import { createServer } from 'node:http';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { WebSocketServer } from 'ws';
 import { createEnvelope } from '../src/core.js';
 import { apply, ensureLocalSharedSecret, needsPublicReconnect, resolveNostrSignEvent } from '../index.js';
 
@@ -60,15 +64,57 @@ test('inbound approved activation creates a local agent and submits its prompt',
   }
 });
 
-test('Nostr signer is available when UI selects public despite the plugin LAN default', async () => {
+test('Nostr signer created with LAN defaults produces a cryptographically valid event', async () => {
   const signEvent = resolveNostrSignEvent({ networkScope: 'lan' });
   try {
-    const signed = await signEvent({ kind: 20000, created_at: 1, tags: [], content: 'test' });
-    assert.match(signed.pubkey, /^[0-9a-f]{64}$/);
-    assert.match(signed.id, /^[0-9a-f]{64}$/);
-    assert.match(signed.sig, /^[0-9a-f]{128}$/);
+    const event = await signEvent({ kind: 20000, created_at: 1, tags: [], content: 'test' });
+    const expectedId = createHash('sha256').update(JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content])).digest('hex');
+    assert.equal(event.id, expectedId);
+    assert.equal(schnorr.verify(event.sig, event.id, event.pubkey), true);
   } finally {
     signEvent.close?.();
+  }
+});
+
+test('public Host setup auto-starts Nostr with static LAN plugin config', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'dsh-network-agent-public-host-'));
+  const relay = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+  await new Promise((resolve) => relay.once('listening', resolve));
+  const relayUrl = `ws://127.0.0.1:${relay.address().port}`;
+  relay.on('connection', (socket) => socket.on('message', (raw) => {
+    const packet = JSON.parse(raw.toString());
+    if (packet[0] === 'REQ') socket.send(JSON.stringify(['EOSE', packet[1]]));
+  }));
+
+  let uiHandler; let dispose;
+  const ctx = {
+    tools: { register() { return () => {}; } },
+    agentLoop: { async create() { return { id: 'unused', followup() {} }; } },
+    get(name) {
+      if (name !== 'webServer') return undefined;
+      return { register({ handler }) { uiHandler = handler; return () => {}; } };
+    },
+    effect(callback) { dispose = callback(); return dispose; },
+  };
+  let httpServer;
+  try {
+    apply(ctx, { mode: 'internet', networkScope: 'lan', dataDir, nostrRelays: [relayUrl], pairingTimeoutMs: 1000, ui: { enabled: true } });
+    httpServer = createServer((req, res) => uiHandler(req, res));
+    await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${httpServer.address().port}/network-agent-collab`;
+    const setup = await fetch(`${base}/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ network: 'public', role: 'host' }) });
+    assert.equal(setup.status, 200);
+    const created = await fetch(`${base}/host/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    assert.equal(created.status, 200);
+    const result = await created.json();
+    assert.equal(result.publicMode, 'nostr');
+    assert.equal(result.automaticPairing, true);
+    assert.equal(result.endpoint, `nostr://${relayUrl}`);
+  } finally {
+    dispose?.();
+    if (httpServer?.listening) await new Promise((resolve) => httpServer.close(resolve));
+    await new Promise((resolve) => relay.close(resolve));
+    rmSync(dataDir, { recursive: true, force: true });
   }
 });
 
